@@ -24,6 +24,10 @@ const
                ">Clstr<", ">Cap<", ">Tags<", ">Paint<", ">K<", ">D<",
                "Filling hoppers", "In the locker room", ">EYES<",
                "showing recorded inputs", "kills / flag story"]
+  ## The transport verdict chip is re-labelled at runtime by the game block,
+  ## because the shared chrome writes "RED WINS" into it from the frame's team
+  ## key and chrome_common.js is byte-for-byte the starter's.
+  VerdictRelabel = "' — PAR '"
   ## Each re-mapped string, present exactly once.
   Remapped = [
     "<span>Task</span><span>Mission</span><span>Result</span><span>Turns</span><span>Credits</span>",
@@ -61,6 +65,9 @@ suite "minigrid endcard labels":
       if count != 1:
         checkpoint("re-mapped string appears " & $count & " times: " & phrase)
       check count == 1
+    ## The verdict chip is re-labelled for the one cog.
+    check VerdictRelabel in page
+    check "mgEl('win-chip')" in page
     ## The documented divergence is real and bounded: these selectors survive,
     ## and nothing else paintbot-shaped does.
     for selector in InheritedSelectors:

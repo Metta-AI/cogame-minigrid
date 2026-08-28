@@ -163,6 +163,38 @@ button.beat-marker {
   height: calc(14 * var(--u));
 }
 
+/* --- the endcard's five-column task table ------------------------------ */
+/* The starter's .ec-row is sized for five SHORT columns (K / D / Clstr / Cap);
+   a mission sentence is a whole clause, so the row becomes a grid whose
+   mission column takes the slack and ellipsises, and every other column keeps
+   its natural width. */
+#endcard .ec-teams .ec-thead,
+#endcard .ec-teams .ec-row {
+  display: grid;
+  grid-template-columns:
+    minmax(6em, 9em) minmax(0, 1fr) 5.5em 4em 5em;
+  gap: calc(8 * var(--u));
+  align-items: baseline;
+  text-align: left;
+  width: 100%;
+}
+#endcard .ec-teams .ec-row > span:nth-child(2),
+#endcard .ec-teams .ec-thead > span:nth-child(2) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#endcard .ec-teams .ec-row > span:nth-child(n+3),
+#endcard .ec-teams .ec-thead > span:nth-child(n+3) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+#stage.tiny #endcard .ec-teams .ec-thead,
+#stage.tiny #endcard .ec-teams .ec-row {
+  grid-template-columns: 5.5em minmax(0, 1fr) 4em 3em 3.5em;
+  gap: calc(4 * var(--u));
+}
+
 /* --- feed rows --------------------------------------------------------- */
 .feed-row .mg-say { color: var(--paper); font-style: italic; }
 .feed-row .mg-note { color: var(--amber); letter-spacing: 0.06em; }
@@ -424,13 +456,23 @@ button.beat-marker {
     if (cond && s.over) {
       cond.textContent = 'Ended ' + s.over.reason + ' (' + s.over.endRule + ')';
     }
+    // The transport's verdict chip is fed by the shared chrome from the
+    // frame's team key, so it reads "RED WINS". There are no teams here:
+    // re-label it for the ONE cog, by its alias.
+    var chip = mgEl('win-chip');
+    if (chip) {
+      var verdict = mg.solved + '/' + mg.count + ' — PAR ' +
+        (s.over && s.over.winner === 'red' ? 'MET' : 'MISSED');
+      if (chip.textContent !== verdict) chip.textContent = verdict;
+    }
     var teamsEl = mgEl('ec-teams');
     if (teamsEl) {
       var rows = '<div class="ec-thead"><span>Task</span><span>Mission</span>' +
         '<span>Result</span><span>Turns</span><span>Credits</span></div>';
       (mg.pips || []).forEach(function (p, i) {
-        rows += '<div class="ec-row"><span>' + (i + 1) + ' ' +
-          mgUpper(p.family) + '</span><span>' + CTX.esc(p.mission || '—') +
+        rows += '<div class="ec-row" title="' + CTX.esc(p.mission || '') +
+          '"><span>' + (i + 1) + ' ' + mgUpper(p.family) +
+          '</span><span>' + CTX.esc(p.mission || '—') +
           '</span><span>' + p.state + '</span><span>' + p.turns +
           '</span><span>' + p.credits + '/3</span></div>';
       });
