@@ -204,7 +204,15 @@ button.beat-marker {
    [0.5, 1.6]; both are the starter's, kept verbatim. These five rules are
    what this game adds on top, and tests/test_minigrid_viewer.nim asserts each
    of them exists. */
-#stage.tiny .plate .mg-alias { display: none; }
+#stage.tiny .plate .mg-alias {
+  /* The note's rule 2 keeps `alias + name + solved + carrying chip` at .tiny,
+     so the alias STAYS: it shrinks and ellipsises instead of disappearing. */
+  font-size: calc(7 * var(--u));
+  letter-spacing: 0.08em;
+  max-width: calc(120 * var(--u));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #stage.tiny .plate .mg-carry {
   min-width: calc(22 * var(--u));
   font-size: calc(10 * var(--u));
