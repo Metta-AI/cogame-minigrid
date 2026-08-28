@@ -4287,6 +4287,19 @@ button.beat-marker {
 /* --- feed rows --------------------------------------------------------- */
 .feed-row .mg-say { color: var(--paper); font-style: italic; }
 .feed-row .mg-note { color: var(--amber); letter-spacing: 0.06em; }
+/* The inherited row is `white-space: nowrap` and sized to content, which is
+   right for a paintball kill line and wrong for a 140-rune remark or a whole
+   mission sentence: at 360 px such a row grows past the frame and the tail of
+   the sentence is drawn off-screen. Model-authored rows therefore WRAP inside
+   the feed's own reserved width instead of running away — the band is widened,
+   the text is never shortened (checklist item 15). */
+.feed-row.mg-remark {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  line-height: 1.3;
+  align-items: flex-start;
+}
 
 /* --- legible at 360px -------------------------------------------------- */
 /* relayout() toggles #stage.tiny at boardW <= 620 and clamps --hudscale to
@@ -4607,7 +4620,7 @@ button.beat-marker {
           ': ' + e.mission + ' — click to jump here');
         mgFeed('<span class="mg-note">TASK ' + (e.i + 1) + ' — ' +
           mgUpper(e.family) + ':</span> <span class="mg-say">&ldquo;' +
-          CTX.esc(e.mission) + '&rdquo;</span>');
+          CTX.esc(e.mission) + '&rdquo;</span>', 'mg-remark');
         CTX.banner(mgUpper(e.family) + ' — ' + e.mission, 'amb');
         return true;
       case 'solved':
@@ -4649,13 +4662,13 @@ button.beat-marker {
       case 'say':
         mgFeed('<span class="who red">Alpha</span>' +
           '<span class="glyph">:</span><span class="mg-say">&ldquo;' +
-          CTX.esc(e.text) + '&rdquo;</span>');
+          CTX.esc(e.text) + '&rdquo;</span>', 'mg-remark');
         return true;
       case 'plan':
         mgFeed('PLAN — ' + CTX.esc(e.verbs || '(wait)') +
           (e.truncated ? ' <span class="mg-note">CUT OFF</span>' : '') +
           (e.dropped ? ' <span class="mg-note">' + e.dropped +
-            ' DROPPED</span>' : ''));
+            ' DROPPED</span>' : ''), 'mg-remark');
         return true;
       case 'pickup':
         mgFeed('PICKED UP THE ' + mgUpper(e.color) + ' ' + mgUpper(e.type));
