@@ -152,6 +152,29 @@
     if (note) note.textContent = 'FIXTURE FAILED: ' + message;
   }
 
+  // Wrap `text` the way the DOM wraps it inside `width`, so a run the shipped
+  // page lays out over several lines is transcribed as a block instead of as
+  // one impossible line. Single-line runs (white-space: nowrap — every label
+  // and nameplate here) keep the one-line treatment, which is where a string
+  // with nowhere to go still shows up as a draw outside the canvas.
+  function wrapText(ctx, text, width) {
+    var words = text.split(/\s+/);
+    var lines = [];
+    var line = '';
+    for (var i = 0; i < words.length; i++) {
+      if (!words[i]) continue;
+      var next = line ? line + ' ' + words[i] : words[i];
+      if (line && ctx.measureText(next).width > width) {
+        lines.push(line);
+        line = words[i];
+      } else {
+        line = next;
+      }
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [text];
+  }
+
   // Transcribe the real page's DOM text runs onto our canvas at their measured
   // geometry, so --strict-text-bounds measures the SHIPPED strings.
   function transcribe(doc, canvas, runs) {
@@ -178,8 +201,18 @@
         // Clamp into the canvas the way the shipped layout clamps into the
         // board: a run that cannot fit is what --strict-text-bounds is for.
         var x = Math.max(0, Math.min(canvas.width - 4, box.left));
-        var y = Math.max(0, Math.min(canvas.height - size - 2, box.top));
-        ctx.fillText(text, x, y);
+        var white = String(style.whiteSpace || '');
+        var wraps = white.indexOf('nowrap') < 0 && white.indexOf('pre') !== 0;
+        var lines = wraps
+          ? wrapText(ctx, text, Math.max(24, Math.min(box.width || canvas.width,
+                                                      canvas.width - x)))
+          : [text];
+        var lineHeight = size * 1.3;
+        var block = lineHeight * lines.length;
+        var y = Math.max(0, Math.min(canvas.height - block - 2, box.top));
+        for (var line = 0; line < lines.length; line++) {
+          ctx.fillText(lines[line], x, y + line * lineHeight);
+        }
         runs.push(text);
         drawn++;
       }
