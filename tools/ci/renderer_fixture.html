@@ -106,7 +106,6 @@
 
   var EVENTS = [
     { k: 'taskstart', t: 10, i: 0, of: 5, family: 'lavagap', mission: MISSION, cap: 11 },
-    { k: 'say', t: 12, text: SAY },
     { k: 'plan', t: 12, n: 3, verbs: 'goto toggle forward forward forward',
       truncated: true, dropped: 2 },
     { k: 'pickup', t: 20, type: 'key', color: 'yellow', x: 2, y: 9 },
@@ -116,8 +115,32 @@
     { k: 'lava', t: 30, x: 4, y: 4 },
     { k: 'failed', t: 31, i: 0, why: 'died' },
     { k: 'fallback', t: 33, i: 4, cause: 'timeout' },
-    { k: 'solved', t: 40, i: 1, turns: 5, ticks: 41 }
+    { k: 'solved', t: 40, i: 1, turns: 5, ticks: 41 },
+    // The say is driven LAST on purpose: the shipped feed keeps only
+    // MAX_FEED = 4 rows, and the full-length assertion below reads the remark
+    // back out of the row the shipped chrome actually built.
+    { k: 'say', t: 12, text: SAY }
   ];
+
+  // The fixture's own strings must come out of the shipped chrome UNSHORTENED.
+  // Without this, a game block that quietly trimmed a remark before writing it
+  // into a feed row would transcribe the short string, measure it, and pass —
+  // leaving the fixture green while testing nothing (checklist item 15's last
+  // bullet). Nothing here shrinks a string: it reads the transcribed runs back.
+  function assertFullLength(runs, width) {
+    [['the 140-rune say', SAY], ['the mission sentence', MISSION]]
+      .forEach(function (entry) {
+        var label = entry[0], want = entry[1];
+        var carried = runs.some(function (text) { return text.indexOf(want) >= 0; });
+        if (carried) return;
+        var longest = runs.reduce(
+          function (a, b) { return b.length > a.length ? b : a; }, '');
+        throw new Error(label + ' came out of the shipped chrome shortened at ' +
+          width + 'px: wanted ' + Array.from(want).length +
+          ' runes, longest transcribed run was ' + Array.from(longest).length +
+          ' runes');
+      });
+  }
 
   function fail(message) {
     document.documentElement.setAttribute('data-replay-error', message);
@@ -127,7 +150,7 @@
 
   // Transcribe the real page's DOM text runs onto our canvas at their measured
   // geometry, so --strict-text-bounds measures the SHIPPED strings.
-  function transcribe(doc, canvas) {
+  function transcribe(doc, canvas, runs) {
     var ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     var selectors = ['#mg-ribbon .mg-taskline', '#mg-ribbon .mg-mission',
@@ -153,6 +176,7 @@
         var x = Math.max(0, Math.min(canvas.width - 4, box.left));
         var y = Math.max(0, Math.min(canvas.height - size - 2, box.top));
         ctx.fillText(text, x, y);
+        runs.push(text);
         drawn++;
       }
     });
@@ -182,6 +206,10 @@
     }
     var total = 0;
     try {
+      if (Array.from(SAY).length !== 140) {
+        throw new Error('the fixture built a ' + Array.from(SAY).length +
+                        '-rune say; MaxSayRunes is 140');
+      }
       WIDTHS.forEach(function (width) {
         frame.width = String(width);
         frame.height = String(Math.round(width * 0.5625));
@@ -215,7 +243,9 @@
           throw new Error('#fpv (the agent view 7x7 inset) is display:none at ' +
                           width + 'px after a frame that carries a view');
         }
-        total += transcribe(doc, canvas);
+        var runs = [];
+        total += transcribe(doc, canvas, runs);
+        assertFullLength(runs, width);
       });
     } catch (e) {
       fail(e.message);
