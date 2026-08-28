@@ -269,12 +269,17 @@ proc applyDirective*(sim: var SimServer, directive: Directive,
   let expansion = expandPlan(sim.knownMap, sim.agent.x, sim.agent.y,
     sim.agent.dir, directive.actions, sim.config.macroPrimitiveCap,
     sim.config.turnTicks)
+  ## An entry that fails validation is counted ONCE, in `repliesRepaired`;
+  ## `actionsDropped` counts the entries past `maxActionsPerTurn` and nothing
+  ## else (design note §Turn structure 6a/6b). The same number rides the
+  ## `directive` record's `dropped` slot, which is what playback feeds back
+  ## into `installPlan`, so the two counters agree live and in replay.
   sim.repliesRepaired += directive.dropped
   sim.notes = directive.notes
   let turn = sim.turnsPlayed + 1
   let task = sim.taskIndex
   sim.installPlan(expansion.primitives, expansion.truncated,
-    directive.dropped + directive.overCap, expansion.unreachable)
+    directive.overCap, expansion.unreachable)
   case directive.source
   of dsLlm: inc sim.llmTurns
   of dsFallback: inc sim.fallbackTurns
@@ -284,7 +289,7 @@ proc applyDirective*(sim: var SimServer, directive: Directive,
       a: directive.say))
   boundedDirectiveRecord(directive, turn, task, 0, seatAlias(0),
     expansion.primitives, expansion.truncated,
-    directive.dropped + directive.overCap, expansion.unreachable, view)
+    directive.overCap, expansion.unreachable, view)
 
 proc applyRecordedDirective*(sim: var SimServer, record: JsonNode) =
   ## PLAYBACK. The `directive` record's `executed` array IS this game's input
