@@ -20,6 +20,7 @@
 import
   std/[json, options, os, strutils],
   bitworld/spriteprotocol,
+  minigrid/sim_types,
   whisky
 
 const
@@ -34,10 +35,13 @@ proc registrationBlob(prompt, scripted, policy: string): string =
   ## The one registration message. `scripted` is JSON null when the seat is
   ## an LLM seat, so the server can tell "no baseline named" from "scout
   ## named explicitly".
+  ## Both caps are applied HERE, on RUNE boundaries, before the blob goes on
+  ## the wire; the server re-applies them on receipt because a seat container
+  ## is not trusted input.
   var node = %*{
     "type": "register",
-    "prompt": prompt,
-    "policy": policy
+    "prompt": prompt.truncateRunes(MaxPromptRunes),
+    "policy": policy.truncateRunes(MaxPolicyLabelRunes)
   }
   if scripted.len > 0:
     node["scripted"] = %scripted
