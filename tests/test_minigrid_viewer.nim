@@ -126,6 +126,14 @@ suite "minigrid viewer":
                   "function blitObject(layer, obj)", "function draw()"]:
       check proc0 in core
     check "function pushFeed(row)" in page
+    ## The page is DERIVED, and the block region must still BE
+    ## client/minigrid_block.html — the file the AGENTS guide says to edit.
+    ## Nothing in CI can re-derive the page (the runner has no starter
+    ## checkout), so this is what catches a hand-edit of the derived artifact
+    ## that never went back into its source.
+    let blockFile = readRepo("client/minigrid_block.html")
+    check page.endsWith(blockFile.replace("window.PaintballChrome",
+                                          "window.MinigridChrome"))
     ## The ONLY edit to the starter's compositor is the wire namespace.
     check "window.MINIGRID_WIRE" in core
     check "window.CTF_WIRE &&" notin core
