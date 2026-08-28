@@ -120,6 +120,18 @@ suite "minigrid manifest":
       check played.phase == GameOver
       check played.endReason == erComplete
 
+    ## The xland constants are bounded by `validate()` as well as by
+    ## config_schema: below four objects or three rules the rule sampler
+    ## returns an EMPTY set and `generateXland` indexes it.
+    var short = defaultGameConfig()
+    short.xlandObjects = 3
+    expect ConfigError:
+      short.validate()
+    var norules = defaultGameConfig()
+    norules.xlandRules = 2
+    expect ConfigError:
+      norules.validate()
+
   test "34. the manifest loads under the installed CLI's own validator":
     ## CI runs `coworld`'s `validate_upload_manifest` / `_load_template_manifest`
     ## for real (the collab-cooking 2026-08-25 scar). Here we assert the shape

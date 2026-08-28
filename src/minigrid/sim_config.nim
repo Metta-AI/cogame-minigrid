@@ -157,6 +157,21 @@ proc validate*(config: GameConfig) =
   if config.maxTicks != config.maxTurns * config.turnTicks:
     raise newException(ConfigError,
       "maxTicks must equal maxTurns * turnTicks")
+  ## The xland rule sampler needs four distinct objects on the board and three
+  ## unused (type, colour) pairs left over for the chained triple; below that
+  ## it returns an EMPTY rule set and `generateXland` reads `rules[^1]`. The
+  ## manifest's config_schema carries the same bounds; this is the check for
+  ## every other way a config arrives (a replay's config JSON, a direct
+  ## construction, a hand-run container).
+  if config.xlandRules != 3:
+    raise newException(ConfigError,
+      "xlandRules is the chained triple and must be 3; got " &
+      $config.xlandRules)
+  if config.xlandObjects < 4 or config.xlandObjects > 8:
+    raise newException(ConfigError,
+      "xlandObjects must be between 4 and 8 (the rule sampler draws four " &
+      "distinct board objects and three unused pairs); got " &
+      $config.xlandObjects)
 
 proc update*(config: var GameConfig, configJson: string) =
   ## Applies the resolved config JSON (the runner's, or the one a replay
