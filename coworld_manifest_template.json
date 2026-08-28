@@ -12,16 +12,16 @@
     "name": "minigrid",
     "owner": "daveey@softmax.com",
     "description": "One cog, alone, in a 13x13 walled gridworld it can only see 7x7 of, with a sentence telling it what to do: cross the lava gap, find the yellow key and unlock the door, thread four rooms behind closed doors, fetch the blue ball from a locked side room, follow a BabyAI instruction, or work out a hidden production rule by pushing objects together. Five tasks in a row, eleven turns each; the score is how many it solved.",
-    "image": "{{MINIGRID_IMAGE}}",
-    "source_url": "https://github.com/Metta-AI/cogame-minigrid",
     "replay_viewer": {
       "bundle": "static-replay-viewer"
     },
     "runnable": {
       "type": "game",
+      "image": "{{MINIGRID_IMAGE}}",
       "run": [
         "/bin/minigrid"
       ],
+      "source_url": "https://github.com/Metta-AI/cogame-minigrid",
       "env": {
         "ANTHROPIC_API_KEY_URI": "secret://coworld/minigrid/anthropic_api_key"
       }
@@ -482,7 +482,7 @@
   "player": [
     {
       "id": "scout",
-      "type": "policy",
+      "type": "player",
       "name": "scout",
       "description": "The published scripted baseline: a deterministic frontier explorer with a goal check. It is also the server-side fallback whenever a seat's LLM call fails twice, so every episode always has a legal plan.",
       "image": "{{MINIGRID_IMAGE}}",

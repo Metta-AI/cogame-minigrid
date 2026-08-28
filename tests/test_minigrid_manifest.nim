@@ -128,7 +128,21 @@ suite "minigrid manifest":
     check "{{MINIGRID_IMAGE}}" in raw
     let m = parseJson(raw)
     check m.hasKey("$schema")
-    check m["game"]["image"].getStr() == "{{MINIGRID_IMAGE}}"
+    ## `_load_template_manifest` reads the image off EVERY runnable — the game's
+    ## and every role section's — so the placeholder lives INSIDE
+    ## `game.runnable`, never beside it (coworld/bundle.py:123-130 raises
+    ## KeyError('image') otherwise), and `source_url` goes with it because
+    ## `CoworldGame` forbids extra keys.
+    check m["game"]["runnable"]["image"].getStr() == "{{MINIGRID_IMAGE}}"
+    check not m["game"].hasKey("image")
+    check m["game"]["runnable"].hasKey("source_url")
+    check not m["game"].hasKey("source_url")
+    ## Role-section entries carry a runnable type from the CLI's own enum
+    ## {player, commissioner, grader, diagnoser, optimizer} — "policy" is not
+    ## one of them.
+    for player in m["player"]:
+      check player["type"].getStr() == "player"
+      check player["image"].getStr() == "{{MINIGRID_IMAGE}}"
     ## The compose service name is what the placeholder is DERIVED from
     ## (lantern 0.1.0).
     let compose = readRepo("compose.yaml")
