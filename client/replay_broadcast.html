@@ -4080,6 +4080,7 @@ body[data-embed] #board { top: 0; height: 100%; }</style>
     pushFeed: pushFeed, banner: banner, togglePov: togglePov,
     getState: function () { return lastState; }
   };
+  window.MG_CTX = PB_CTX;
   if (window.MinigridChrome) window.MinigridChrome.install(PB_CTX);
 
   relayout();

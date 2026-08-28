@@ -172,7 +172,7 @@
       fail('cannot reach the shipped page: ' + e.message);
       return;
     }
-    if (!win || !doc || !win.MinigridChrome) {
+    if (!win || !doc || !win.MinigridChrome || !win.MG_CTX) {
       if (Date.now() > deadline) {
         fail('the shipped page never exposed MinigridChrome');
         return;
@@ -190,9 +190,10 @@
         if (typeof win.dispatchEvent === 'function') {
           win.dispatchEvent(new win.Event('resize'));
         }
-        // The page's own PB_CTX lives inside the chrome IIFE, so it is not
-        // reachable from here; the block keeps the context install() gave it.
-        var ctx = win.PB_CTX || null;
+        // The shipped page publishes its own chrome context as MG_CTX, so
+        // this fixture drives the REAL chrome through the REAL context.
+        var ctx = win.MG_CTX;
+        if (!ctx) throw new Error('the shipped page published no chrome context');
         [400, 640].forEach(function (tick) {
           var state = worstState(tick);
           EVENTS.forEach(function (event) {

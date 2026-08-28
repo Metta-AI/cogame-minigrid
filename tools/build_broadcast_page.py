@@ -123,6 +123,12 @@ JS_REWRITES = [
     # not request them (four 404s per open otherwise).
     ("""    ['green', 'blue', 'yellow', 'red'].forEach(function (bot) {""",
      """    ['red'].forEach(function (bot) {"""),
+    # The chrome context is built inside the page's own IIFE, so a harness
+    # cannot reach it. Publish it: tools/ci/renderer_fixture.html drives the
+    # SHIPPED chrome through its real context rather than a stand-in.
+    ("""  if (window.PaintballChrome) window.PaintballChrome.install(PB_CTX);""",
+     """  window.MG_CTX = PB_CTX;
+  if (window.PaintballChrome) window.PaintballChrome.install(PB_CTX);"""),
     ("""  core.attachMinimap($('minimap-canvas'));""",
      """  // MINIGRID: nothing to attach — broadcast_core.js tolerates never being
   // attached (its surface stays null and its draw returns on the first guard)."""),
