@@ -184,6 +184,14 @@ jobs:
           done
           exit "${fail}"
 
+      # The shipped DefaultBaselineParams are the PICK of a grid sweep, not a
+      # guess, and tools/ci/baseline_tuning.json records that sweep. Re-running
+      # it with --check here is what keeps the recorded pick honest: a change to
+      # the baseline, the driver or a generator that moves the winning cell is
+      # red until the sweep is re-recorded (design note §Baselines).
+      - name: Re-run the baseline sweep with --check
+        run: nim c -r -d:release --hints:off --path:src tools/tune_baselines.nim --check
+
   # ---------------------------------------------------------------------
   # Packaging smoke: the production image builds, and one real episode runs
   # end to end in raw docker with the certification fixture's seat mix.
