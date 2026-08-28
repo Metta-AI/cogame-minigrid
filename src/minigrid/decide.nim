@@ -188,12 +188,20 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
   while open and attempt < 2:
     if engine.client.disabled:
       break
-    if getMonoTime() - turnStart >= budget:
+    let remainingMs = (budget - (getMonoTime() - turnStart)).inMilliseconds.int
+    if remainingMs <= 0:
       result.records.add(fallbackRecord(turnIndex, attempt + 1, "timeout",
         "per-turn budget exhausted before attempt " & $(attempt + 1)))
       break
-    let deadlineMs =
-      if attempt == 0: sim.config.attempt1Ms else: sim.config.retryMs
+    ## turnBudgetMs is a monotonic deadline around the WHOLE turn, the
+    ## turnSpacingMs rate floor included, so an attempt is given the SMALLER of
+    ## its configured deadline and the time the turn has left. Unclamped, a
+    ## 2.6 s spacing sleep plus a 6 s attempt 1 left this guard satisfied at
+    ## 8.6 s and a full 3 s retry then ran the turn to 11.6 s, past the 9.5 s
+    ## the note's episode arithmetic budgets per turn.
+    let deadlineMs = min(
+      (if attempt == 0: sim.config.attempt1Ms else: sim.config.retryMs),
+      remainingMs)
     var user = $observation
     if attempt > 0:
       user.add("\n\nYour previous reply was not usable. Reply with ONLY the " &
