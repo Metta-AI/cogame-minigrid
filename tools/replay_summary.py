@@ -79,24 +79,21 @@ def summarise(path: str) -> dict:
     protocol = "minigrid/v1"
     game_version = ""
     # The header is `magic + format version + gameName + gameVersion` before the
-    # config; recover the version as the ASCII run right after the game name.
-    try:
-        head_text = header.decode("latin-1")
-        # Split AFTER the magic ("COWLDCTF" itself ends in the game name), so
-        # the digit scan runs from the gameName+gameVersion region.
-        if "COWLDMGD" in head_text:
-            head_text = head_text.split("COWLDMGD", 1)[1]
-        if "minigrid" in head_text:
-            tail = head_text.split("minigrid", 1)[1]
-            digits = ""
-            for ch in tail:
-                if ch.isdigit():
-                    digits += ch
-                elif digits:
-                    break
-            game_version = digits
-    except Exception:                                   # noqa: BLE001
-        pass
+    # config, and every string in it is LENGTH-PREFIXED (little-endian uint16).
+    # Read the prefix rather than scanning for digits: the bytes that follow the
+    # version are a timestamp, so a scan that stops at the first non-digit picks
+    # up a stray '0'-'9' low byte roughly one run in twenty-five.
+    name = b"minigrid"
+    at = header.find(name)
+    if at >= 0:
+        cursor = at + len(name)
+        size = int.from_bytes(header[cursor:cursor + 2], "little")
+        field = header[cursor + 2:cursor + 2 + size]
+        if 0 < size <= 8 and len(field) == size:
+            try:
+                game_version = field.decode("ascii")
+            except UnicodeDecodeError:
+                game_version = ""
 
     first = data.find(b"{")
     config: dict = {}
