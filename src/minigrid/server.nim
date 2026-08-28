@@ -383,6 +383,11 @@ proc runServerLoop*() =
       except CatchableError:
         discard
     sim.pushFeedDirective(record)
+    ## The `plan`, `fallback` and `budget` events are derived from the record
+    ## by the SAME proc playback uses, so the live /global feed carries them
+    ## too rather than only the replay (design note §Broadcast: the derived
+    ## events are identical live and in replay).
+    sim.pushControlEvents(record)
 
   proc broadcastFrame(events: JsonNode) =
     var sockets: seq[WebSocket]

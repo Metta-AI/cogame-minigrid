@@ -89,6 +89,43 @@ proc loadReplay*(path: string): ReplayData =
 #  Applying one recorded control record — the SAME proc live and on playback
 # ---------------------------------------------------------------------------
 
+proc pushControlEvents*(sim: var SimServer, record: JsonNode) =
+  ## The broadcast events a control record derives: `plan`, `fallback` and
+  ## `budget`. Called from BOTH paths — the live server as each record is
+  ## written (`server.nim`'s `writeChat`) and `applyControlRecord` on playback
+  ## — so the /global feed carries the same event kinds live and in replay,
+  ## which is what the design note means by "identical live and in replay".
+  if record.isNil or record.kind != JObject:
+    return
+  case record{"k"}.getStr()
+  of "directive":
+    var verbs: seq[string]
+    for item in record{"actions"}:
+      verbs.add(item{"do"}.getStr())
+    sim.pending.add(SimEvent(kind: evPlan, tick: sim.tickCount,
+      i: record{"turn"}.getInt(), a: verbs.join(" "),
+      n: (if record{"truncated"}.getBool(): 1 else: 0),
+      m: record{"dropped"}.getInt()))
+  of "fallback":
+    sim.pending.add(SimEvent(kind: evFallback, tick: sim.tickCount,
+      i: record{"turn"}.getInt(), a: record{"cause"}.getStr()))
+  of "budget_guard":
+    sim.pending.add(SimEvent(kind: evBudget, tick: sim.tickCount,
+      i: record{"turn"}.getInt(), n: record{"remaining_s"}.getInt()))
+  else:
+    discard
+
+proc pushControlEvents*(sim: var SimServer, message: string) =
+  ## The same, from the serialized record the live server writes.
+  if message.len == 0 or message[0] != '{':
+    return
+  var record: JsonNode
+  try:
+    record = parseJson(message)
+  except CatchableError:
+    return
+  sim.pushControlEvents(record)
+
 proc applyControlRecord*(sim: var SimServer, message: string) =
   ## Control records ride the chat stream as JSON objects. `directive`
   ## installs the identical primitive queue (this game's whole input log) and
@@ -122,13 +159,7 @@ proc applyControlRecord*(sim: var SimServer, message: string) =
     let say = record{"say"}.getStr()
     if say.len > 0:
       sim.pending.add(SimEvent(kind: evSay, tick: sim.tickCount, a: say))
-    var verbs: seq[string]
-    for item in record{"actions"}:
-      verbs.add(item{"do"}.getStr())
-    sim.pending.add(SimEvent(kind: evPlan, tick: sim.tickCount,
-      i: record{"turn"}.getInt(), a: verbs.join(" "),
-      n: (if record{"truncated"}.getBool(): 1 else: 0),
-      m: record{"dropped"}.getInt()))
+    sim.pushControlEvents(record)
   of "register":
     let slot = record{"slot"}.getInt()
     for entry in sim.players.mitems:
@@ -139,12 +170,8 @@ proc applyControlRecord*(sim: var SimServer, message: string) =
         entry.registered = true
     if slot >= 0 and slot < sim.policyKinds.len:
       sim.policyKinds[slot] = record{"kind"}.getStr("scripted")
-  of "fallback":
-    sim.pending.add(SimEvent(kind: evFallback, tick: sim.tickCount,
-      i: record{"turn"}.getInt(), a: record{"cause"}.getStr()))
-  of "budget_guard":
-    sim.pending.add(SimEvent(kind: evBudget, tick: sim.tickCount,
-      i: record{"turn"}.getInt(), n: record{"remaining_s"}.getInt()))
+  of "fallback", "budget_guard":
+    sim.pushControlEvents(record)
   of "stop":
     let rule = record{"endRule"}.getStr()
     for value in EndRule:
