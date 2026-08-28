@@ -45,6 +45,41 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+
+      # Design note test 34: the PINNED CLI's own loader, not a shape check.
+      # `coworld build` reads the image off every runnable
+      # (coworld/bundle.py:128) and then validates the whole document through
+      # pydantic. A template that satisfies every Nim string assertion can still
+      # abort the release run's first step -- it did: the placeholder sat at
+      # `game.image` and `coworld build` raised KeyError('image') before the
+      # replay-viewer hook ever ran (review r1, B1).
+      - name: Manifest loads under the pinned coworld CLI
+        env:
+          # Mirrors coworld-release.yml's COWORLD_PKG; bump the two together.
+          COWORLD_PKG: "coworld[auth]==0.1.43"
+        run: |
+          set -euo pipefail
+          uv run --no-project --with "${COWORLD_PKG}" python - <<'PY'
+          import json
+          from coworld.bundle import _load_template_manifest
+
+          with open("coworld_manifest_template.json", encoding="utf-8") as handle:
+              template = json.load(handle)
+          # The map `coworld build` derives from compose.yaml's single service
+          # name (coworld/bundle.py `_compose_image_placeholders`):
+          # service `minigrid` -> `{{MINIGRID_IMAGE}}`. The Nim manifest test
+          # pins the compose side of that identity.
+          manifest = _load_template_manifest(
+              template, "0.0.0", {"{{MINIGRID_IMAGE}}": "coworld-minigrid:latest"}
+          )
+          print(
+              "manifest loads:",
+              manifest.game.name,
+              manifest.game.runnable.image,
+              f"{len(manifest.variants)} variants",
+          )
+          PY
 
       - name: Cache nimby toolchain and nimcache
         uses: actions/cache@v4
