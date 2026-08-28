@@ -1,7 +1,8 @@
 ## The board-label vocabulary contract. `tests/label_manifest.txt` pins the
-## exact set of strings this game may draw on the board, and
-## `tests/test_minigrid_labels.nim` regenerates it — a label change and its
-## manifest update land in the same commit.
+## exact set of strings this game may draw on the board, and test 41 in
+## `tests/test_minigrid_viewer.nim` re-generates it and diffs it against the
+## committed file — a label change and its manifest update land in the same
+## commit.
 ##
 ## Scoped, like the starter's, to the POLICY contract: the words a cog can see
 ## or that name a cog. Spectator chrome strings live in the viewer and are
