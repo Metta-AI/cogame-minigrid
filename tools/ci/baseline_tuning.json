@@ -1,0 +1,83 @@
+{
+  "seeds": 40,
+  "grid": [
+    {
+      "frontierAdjacencyWeight": 1,
+      "spinTurns": 12,
+      "tieBreakByDistance": true,
+      "score": 7123800
+    },
+    {
+      "frontierAdjacencyWeight": 1,
+      "spinTurns": 12,
+      "tieBreakByDistance": false,
+      "score": 15550400
+    },
+    {
+      "frontierAdjacencyWeight": 2,
+      "spinTurns": 12,
+      "tieBreakByDistance": true,
+      "score": 7332980
+    },
+    {
+      "frontierAdjacencyWeight": 2,
+      "spinTurns": 12,
+      "tieBreakByDistance": false,
+      "score": 15550400
+    },
+    {
+      "frontierAdjacencyWeight": 3,
+      "spinTurns": 12,
+      "tieBreakByDistance": true,
+      "score": 7854210
+    },
+    {
+      "frontierAdjacencyWeight": 3,
+      "spinTurns": 12,
+      "tieBreakByDistance": false,
+      "score": 15550400
+    },
+    {
+      "frontierAdjacencyWeight": 4,
+      "spinTurns": 12,
+      "tieBreakByDistance": true,
+      "score": 9517280
+    },
+    {
+      "frontierAdjacencyWeight": 4,
+      "spinTurns": 12,
+      "tieBreakByDistance": false,
+      "score": 15550400
+    },
+    {
+      "frontierAdjacencyWeight": 6,
+      "spinTurns": 12,
+      "tieBreakByDistance": true,
+      "score": 11468560
+    },
+    {
+      "frontierAdjacencyWeight": 6,
+      "spinTurns": 12,
+      "tieBreakByDistance": false,
+      "score": 15550400
+    },
+    {
+      "frontierAdjacencyWeight": 8,
+      "spinTurns": 12,
+      "tieBreakByDistance": true,
+      "score": 12696250
+    },
+    {
+      "frontierAdjacencyWeight": 8,
+      "spinTurns": 12,
+      "tieBreakByDistance": false,
+      "score": 15550400
+    }
+  ],
+  "pick": {
+    "frontierAdjacencyWeight": 1,
+    "spinTurns": 12,
+    "tieBreakByDistance": false,
+    "score": 15550400
+  }
+}

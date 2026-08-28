@@ -1,0 +1,14 @@
+# ONE service, because the manifest image placeholder is DERIVED FROM THE
+# COMPOSE SERVICE NAME (`service minigrid` -> `{{MINIGRID_IMAGE}}`);
+# `{{GAME_IMAGE}}` is not a thing (lantern 0.1.0). The image carries two
+# entrypoints — /bin/minigrid (the game) and /bin/minigrid-player (the seat
+# registrar) — because the shared tools/ci/docker_smoke.sh and
+# tools/ci/policies.json assume a single image (the knights-archers precedent).
+services:
+  minigrid:
+    image: coworld-minigrid:latest
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host

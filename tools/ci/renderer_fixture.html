@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>minigrid renderer fixture</title>
+<style>
+  html, body { margin: 0; background: #14120f; color: #f2e8d8;
+               font: 12px/1.4 system-ui, sans-serif; }
+  #frame { border: 0; display: block; }
+  #tx { display: block; }
+  #note { padding: 6px 10px; }
+</style>
+</head>
+<body>
+<!--
+  THE WORST-CASE RENDERER FIXTURE.
+
+  tools/ci/docker_smoke.sh runs with NO ANTHROPIC_API_KEY, so the seat in the
+  CI replay plays scripted and emits no `say` at all: the smoke replay can
+  never exercise the feed's narration path, the mission ribbon at full cap, or
+  the endcard's failure vocabulary (the cogchemists 2026-08-24 scar). Nothing
+  that merely plays that replay can draw this chrome.
+
+  So this page LOADS THE SHIPPED dist/static-replay-viewer/index.html IN AN
+  IFRAME and shims only the wasm entry's OUTPUT — it does not re-implement the
+  drawing (the particle-worlds 2026-08-26 scar). It drives the real page's own
+  MinigridChrome.frame()/event() entry points with a worst case:
+
+    * a `say` filled to exactly MaxSayRunes (140) with 4-byte emoji,
+    * a mission sentence at full length,
+    * a fully fogged board and all five task-pip states,
+    * an `xland` produce banner and an unlock beat,
+    * a failed-by-lava endcard,
+
+  at several canvas widths INCLUDING 360 px, then transcribes every DOM text
+  run the real page produced onto a canvas at its measured geometry, so
+  `viewer_smoke.mjs --strict-text-bounds` has something to measure (the page's
+  own board pixels are drawn in a Worker on an OffscreenCanvas, where the
+  harness's canvas_text instrumentation sees nothing).
+-->
+<div id="note">minigrid renderer fixture — driving the shipped chrome</div>
+<iframe id="frame" width="960" height="540" src="./index.html"></iframe>
+<canvas id="tx" width="960" height="540"></canvas>
+<script>
+(function () {
+  'use strict';
+
+  var WIDTHS = [960, 640, 360];
+  var SAY = (function () {
+    // Exactly 140 runes, with 4-byte emoji sitting on the boundary.
+    var base = 'I have the yellow key; opening the door at (6,3) and heading east for the green goal square before the lava column closes the gap ';
+    var out = Array.from(base).slice(0, 138).join('') + '\uD83E\uDDE9\uD83D\uDD11';
+    return out;
+  })();
+  var MISSION = 'put the red ball next to the blue box, then use the yellow key to open the door and get to the green goal square';
+
+  function pips() {
+    var states = ['solved', 'failed', 'current', 'pending', 'unreached'];
+    var fams = ['lavagap', 'doorkey', 'multiroom', 'keycorridor', 'babyai'];
+    return states.map(function (state, i) {
+      return { i: i, state: state, family: fams[i], mission: MISSION,
+               turns: 11 - i, credits: (i === 0 ? 3 : i % 3) };
+    });
+  }
+
+  function worstState(tick) {
+    var view = ['???????', '??###??', '?#~G~#?', '?#kob#?', '?##L##?',
+                '?......', '...A...'];
+    return {
+      t: tick, mt: 660, mx: 660, st: 0, sp: 1, pl: true, lp: true,
+      sk: false, ff: false, en: true, mm: -1, bs: 1, pov: -1,
+      ph: tick > 600 ? 'gameover' : 'playing',
+      lob: 0, regime: 'gauntlet', game: 1, games: 1, turnTicks: 12,
+      teams: { red: { lives: 12, prog: 3, held: 3, cov: 312180, own: false,
+                      tags: 97, cogs: 1, flag: 'home', carrier: -1 } },
+      roster: [{ s: 0, name: 'minigrid-missionfirst', alias: 'Alpha',
+                 team: 'red', policy: 'missionfirst', kind: 'llm',
+                 alive: true, lives: 1, carry: true }],
+      mg: {
+        index: 2, count: 5, family: 'xland', mission: MISSION,
+        turn: 7, cap: 11, solved: 3, score: 312180, credits: 12,
+        seen: 97, cells: 169, dir: 'east', carrying: 'yellow key',
+        fallbacks: 2, deaths: 1, crashes: 1, doors: 4, picked: 3,
+        productions: 2, pips: pips(), view: view
+      },
+      over: tick > 600 ? {
+        winner: 'red', draw: false, timeLimit: false,
+        teams: { red: { lives: 12, prog: 3 } },
+        endRule: 'gauntletComplete', reason: 'complete',
+        game: 1, games: 1, regime: 'gauntlet',
+        solved: 3, of: 5, par: 3, score: 312180
+      } : undefined,
+      beats: [
+        { k: 'taskstart', t: 10, i: 0, of: 5, family: 'lavagap', mission: MISSION, cap: 11 },
+        { k: 'unlock', t: 120, color: 'yellow', key: 'yellow', x: 6, y: 3 },
+        { k: 'produce', t: 240, a: 'red key', b: 'blue ball', out: 'purple box', x: 5, y: 5 },
+        { k: 'solved', t: 300, i: 1, turns: 5, ticks: 41 },
+        { k: 'failed', t: 420, i: 2, why: 'died' },
+        { k: 'fallback', t: 500, i: 30, cause: 'timeout' },
+        { k: 'end', t: 640, solved: 3, of: 5, score: 312180,
+          reason: 'complete', endRule: 'gauntletComplete' }
+      ],
+      events: []
+    };
+  }
+
+  var EVENTS = [
+    { k: 'taskstart', t: 10, i: 0, of: 5, family: 'lavagap', mission: MISSION, cap: 11 },
+    { k: 'say', t: 12, text: SAY },
+    { k: 'plan', t: 12, n: 3, verbs: 'goto toggle forward forward forward',
+      truncated: true, dropped: 2 },
+    { k: 'pickup', t: 20, type: 'key', color: 'yellow', x: 2, y: 9 },
+    { k: 'unlock', t: 22, color: 'yellow', key: 'yellow', x: 6, y: 3 },
+    { k: 'produce', t: 24, a: 'red key', b: 'blue ball', out: 'purple box', x: 5, y: 5 },
+    { k: 'subgoal', t: 26, i: 0, which: 1, label: 'door_open' },
+    { k: 'lava', t: 30, x: 4, y: 4 },
+    { k: 'failed', t: 31, i: 0, why: 'died' },
+    { k: 'fallback', t: 33, i: 4, cause: 'timeout' },
+    { k: 'solved', t: 40, i: 1, turns: 5, ticks: 41 }
+  ];
+
+  function fail(message) {
+    document.documentElement.setAttribute('data-replay-error', message);
+    var note = document.getElementById('note');
+    if (note) note.textContent = 'FIXTURE FAILED: ' + message;
+  }
+
+  // Transcribe the real page's DOM text runs onto our canvas at their measured
+  // geometry, so --strict-text-bounds measures the SHIPPED strings.
+  function transcribe(doc, canvas) {
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    var selectors = ['#mg-ribbon .mg-taskline', '#mg-ribbon .mg-mission',
+                     '#clock-time', '#clock-caption', '#fpv-name', '#fpv-cap',
+                     '#ec-headline', '#ec-how', '#ec-wincond',
+                     '.plate-name', '.mg-carry', '.mg-alias',
+                     '#killfeed .feed-row', '.mg-pip .mg-fam', '#tick-clock'];
+    var drawn = 0;
+    selectors.forEach(function (selector) {
+      var nodes = doc.querySelectorAll(selector);
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        var text = (node.textContent || '').trim();
+        if (!text) continue;
+        var box = node.getBoundingClientRect();
+        var style = doc.defaultView.getComputedStyle(node);
+        var size = parseFloat(style.fontSize) || 12;
+        ctx.font = size + 'px ' + (style.fontFamily || 'sans-serif');
+        ctx.fillStyle = '#f2e8d8';
+        ctx.textBaseline = 'top';
+        // Clamp into the canvas the way the shipped layout clamps into the
+        // board: a run that cannot fit is what --strict-text-bounds is for.
+        var x = Math.max(0, Math.min(canvas.width - 4, box.left));
+        var y = Math.max(0, Math.min(canvas.height - size - 2, box.top));
+        ctx.fillText(text, x, y);
+        drawn++;
+      }
+    });
+    return drawn;
+  }
+
+  var frame = document.getElementById('frame');
+  var canvas = document.getElementById('tx');
+  var deadline = Date.now() + 60000;
+
+  function drive() {
+    var win, doc;
+    try {
+      win = frame.contentWindow;
+      doc = frame.contentDocument;
+    } catch (e) {
+      fail('cannot reach the shipped page: ' + e.message);
+      return;
+    }
+    if (!win || !doc || !win.MinigridChrome) {
+      if (Date.now() > deadline) {
+        fail('the shipped page never exposed MinigridChrome');
+        return;
+      }
+      setTimeout(drive, 200);
+      return;
+    }
+    var total = 0;
+    try {
+      WIDTHS.forEach(function (width) {
+        frame.width = String(width);
+        frame.height = String(Math.round(width * 0.5625));
+        canvas.width = width;
+        canvas.height = Math.round(width * 0.5625);
+        if (typeof win.dispatchEvent === 'function') {
+          win.dispatchEvent(new win.Event('resize'));
+        }
+        var ctx = win.PB_CTX || win.MG_CTX;
+        [400, 640].forEach(function (tick) {
+          var state = worstState(tick);
+          EVENTS.forEach(function (event) {
+            try { win.MinigridChrome.event(event, state, ctx); }
+            catch (e) { throw new Error('event ' + event.k + ': ' + e.message); }
+          });
+          try { win.MinigridChrome.frame(state, ctx, false); }
+          catch (e) { throw new Error('frame: ' + e.message); }
+        });
+        total += transcribe(doc, canvas);
+      });
+    } catch (e) {
+      fail(e.message);
+      return;
+    }
+    if (total === 0) {
+      fail('the shipped chrome produced no text to measure');
+      return;
+    }
+    document.getElementById('note').textContent =
+      'minigrid renderer fixture — ' + total + ' shipped text runs measured at ' +
+      WIDTHS.join('/') + ' px';
+    document.documentElement.setAttribute('data-replay-loaded', 'true');
+  }
+
+  frame.addEventListener('load', function () { setTimeout(drive, 400); });
+  setTimeout(drive, 1500);
+})();
+</script>
+</body>
+</html>

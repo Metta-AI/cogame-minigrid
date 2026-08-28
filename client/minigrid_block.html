@@ -1,0 +1,611 @@
+<!-- ============================================================
+     MINIGRID additions to the inherited coworld-ctf chrome
+     ============================================================
+     Everything above this banner is the starter's broadcast page, edited only
+     by the enumerated list in tools/build_broadcast_page.py: the elements the
+     design note removes (the view-controls panel, the POV badge, the hit-point pips,
+     the gear line and the un-fogged tactical inset), the spectator vocabulary
+     re-mapping table, and the CSS for beat kinds this game never emits.
+
+     Nothing here touches the transport band. relayout() still owns --hudscale,
+     --topband and --band on :root; the endcard still stops above the band and
+     is still dismissed by every seek; and every
+     scrubber beat this block draws is a LABELLED, CLICKABLE BUTTON that seeks
+     on click, styled for EVERY kind this sim emits — taskstart, solved,
+     failed, unlock, produce, fallback and end. The builder carries an mg-
+     prefix precisely so it can never be shadowed by the chrome alias block's
+     own hoisted declaration of the shared markBeat (cogame-tandem,
+     2026-08-23).
+     ============================================================ -->
+<style>
+/* --- scorebug: the single plate ---------------------------------------- */
+/* The plate name must survive a 360px featured-match iframe: it grows into
+   whatever room the plate has and ellipsises only when it genuinely runs out,
+   never collapsing to a bare "…". */
+.plate-name {
+  flex: 1 1 auto;
+  min-width: 3.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plate .mg-carry {
+  font-family: var(--pixfont);
+  font-size: calc(12 * var(--u));
+  line-height: 1;
+  min-width: calc(34 * var(--u));
+  text-align: center;
+  padding: calc(3 * var(--u)) calc(5 * var(--u));
+  background: rgba(12, 9, 6, 0.55);
+  box-shadow: inset 0 0 0 calc(1 * var(--u)) rgba(242, 232, 216, 0.14);
+  flex: none;
+  white-space: nowrap;
+}
+.plate .mg-carry.held { color: var(--amber); }
+.plate .mg-alias {
+  font-family: var(--finefont);
+  font-size: calc(8 * var(--u));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  white-space: nowrap;
+}
+.plate .mg-fb { color: var(--amber); font-family: var(--pixfont); }
+
+/* --- the mission ribbon and the task pips ------------------------------ */
+/* Both sit in the BOARD region, under the reserved top band and clear of the
+   transport band; neither is ever positioned inside var(--band). */
+#mg-ribbon {
+  position: absolute;
+  left: calc(8 * var(--u));
+  top: calc(var(--topband, 0px) + 8 * var(--u));
+  width: min(38%, calc(300 * var(--u)));
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(12, 10, 8, 0.82), rgba(12, 10, 8, 0));
+  padding: calc(5 * var(--u)) calc(8 * var(--u));
+}
+#mg-ribbon .mg-taskline {
+  font-family: var(--finefont);
+  font-size: calc(9 * var(--u));
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--amber);
+  white-space: nowrap;
+}
+#mg-ribbon .mg-mission {
+  font-family: var(--dispfont, var(--finefont));
+  font-size: calc(12 * var(--u));
+  line-height: 1.25;
+  color: var(--paper);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+#mg-pips {
+  position: absolute;
+  left: calc(8 * var(--u));
+  top: calc(var(--topband, 0px) + 74 * var(--u));
+  display: flex;
+  gap: calc(5 * var(--u));
+  z-index: 4;
+}
+#mg-pips .mg-pip {
+  width: calc(16 * var(--u));
+  height: calc(16 * var(--u));
+  box-shadow: inset 0 0 0 calc(1.5 * var(--u)) var(--paper-dim);
+  background: transparent;
+  position: relative;
+}
+#mg-pips .mg-pip .mg-fam {
+  position: absolute;
+  top: calc(18 * var(--u));
+  left: 0;
+  font-family: var(--finefont);
+  font-size: calc(6.5 * var(--u));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  white-space: nowrap;
+}
+#mg-pips .mg-pip.current { box-shadow: inset 0 0 0 calc(2.5 * var(--u)) var(--amber); }
+#mg-pips .mg-pip.solved { background: var(--green, #56ba6a); }
+#mg-pips .mg-pip.failed { background: var(--red); }
+#mg-pips .mg-pip.failed::after {
+  content: '';
+  position: absolute;
+  inset: calc(2 * var(--u));
+  background: linear-gradient(45deg, transparent 44%, var(--paper) 44%,
+              var(--paper) 56%, transparent 56%);
+}
+#mg-pips .mg-pip.unreached { opacity: 0.35; }
+
+/* --- the agent's own 7x7 window, in the kept #fpv panel ----------------- */
+#fpv-cap { letter-spacing: 0.12em; }
+
+/* --- scrubber beats: one rule per kind this sim emits, and no others ---- */
+/* Buttons, not divs: each carries a title + aria-label and seeks on click. */
+button.beat-marker {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  appearance: none;
+  background: var(--paper-dim);
+  position: absolute;
+  top: 0;
+  width: calc(2 * var(--u));
+  height: calc(10 * var(--u));
+  transform: translateX(-1px);
+  z-index: 2;
+}
+.beat-marker.taskstart {
+  background: var(--paper);
+  width: calc(2 * var(--u));
+  height: calc(12 * var(--u));
+  opacity: 0.8;
+}
+.beat-marker.solved {
+  background: var(--green, #56ba6a);
+  width: calc(3 * var(--u));
+  height: calc(12 * var(--u));
+}
+.beat-marker.failed {
+  background: var(--red);
+  width: calc(3 * var(--u));
+  height: calc(12 * var(--u));
+}
+.beat-marker.unlock { background: var(--amber); height: calc(8 * var(--u)); }
+.beat-marker.produce { background: #a060d0; height: calc(8 * var(--u)); }
+.beat-marker.fallback { background: var(--paper-dim); height: calc(6 * var(--u)); opacity: 0.8; }
+.beat-marker.end {
+  background: var(--amber);
+  width: calc(3 * var(--u));
+  height: calc(14 * var(--u));
+}
+
+/* --- feed rows --------------------------------------------------------- */
+.feed-row .mg-say { color: var(--paper); font-style: italic; }
+.feed-row .mg-note { color: var(--amber); letter-spacing: 0.06em; }
+
+/* --- legible at 360px -------------------------------------------------- */
+/* relayout() toggles #stage.tiny at boardW <= 620 and clamps --hudscale to
+   [0.5, 1.6]; both are the starter's, kept verbatim. These five rules are
+   what this game adds on top, and tests/test_minigrid_viewer.nim asserts each
+   of them exists. */
+#stage.tiny .plate .mg-alias { display: none; }
+#stage.tiny .plate .mg-carry {
+  min-width: calc(22 * var(--u));
+  font-size: calc(10 * var(--u));
+}
+#stage.tiny #mg-ribbon {
+  width: min(52%, calc(210 * var(--u)));
+  padding: calc(3 * var(--u)) calc(5 * var(--u));
+}
+#stage.tiny #mg-ribbon .mg-mission {
+  font-size: calc(9 * var(--u));
+  -webkit-line-clamp: 3;
+}
+#stage.tiny #mg-pips {
+  top: calc(var(--topband, 0px) + 56 * var(--u));
+  gap: calc(3 * var(--u));
+}
+#stage.tiny #mg-pips .mg-pip { width: calc(12 * var(--u)); height: calc(12 * var(--u)); }
+#stage.tiny #mg-pips .mg-pip .mg-fam { display: none; }
+#stage.tiny #fpv { width: 84px !important; height: 84px !important; }
+#stage.tiny #fpv-grip { display: none; }
+</style>
+<script>
+(function () {
+  'use strict';
+  // Every name here carries an mg- prefix ON PURPOSE. The page's chrome alias
+  // block declares the shared beat builder with a hoisted `var markBeat`, so a
+  // game-block function of that name is silently swallowed by it and the
+  // scrubber ends up with unlabelled div markers that never seek
+  // (cogame-tandem, 2026-08-23). tests/test_minigrid_viewer.nim asserts the
+  // whole alias list is untouched below this banner.
+  var CTX = null;
+  var mgPlaced = {};          // "tick|kind" -> true (dedup)
+  var mgSeenDirective = {};
+  var mgLastTask = -1;
+
+  var MG_GLYPH_COLOUR = {
+    '#': '#6b6152', '.': '#3a352d', '~': '#e0662a', 'G': '#56ba6a',
+    'k': '#e8be44', 'o': '#4a80e0', 'b': '#a06030', 'D': '#c9a24a',
+    'd': '#8a7330', 'L': '#e8be44', 'A': '#d64a3e', '?': '#0c0b0a'
+  };
+
+  function mgEl(id) { return document.getElementById(id); }
+
+  function mgScrubGeometry(s) {
+    var st = Math.max(0, s.st || 0);
+    var mx = Math.max(st + 1, s.mx || 1);
+    return { st: st, span: mx - st };
+  }
+
+  // A LABELLED, CLICKABLE BUTTON on the scrubber that seeks on click. Never
+  // `markBeat` — see the prefix note above.
+  function mgBeat(s, tick, kind, label) {
+    var key = tick + '|' + kind;
+    if (mgPlaced[key]) return;
+    mgPlaced[key] = true;
+    var scrub = mgEl('scrub');
+    if (!scrub) return;
+    var g = mgScrubGeometry(s);
+    var el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'beat-marker ' + kind;
+    el.style.left =
+      (Math.min(1, Math.max(0, (tick - g.st) / g.span)) * 100) + '%';
+    el.title = label;
+    el.setAttribute('aria-label', label);
+    el.__tick = tick;
+    el.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      CTX.send('s:' + tick);
+    });
+    scrub.appendChild(el);
+  }
+
+  function mgFeed(html, cls) {
+    var row = document.createElement('div');
+    row.className = 'feed-row' + (cls ? ' ' + cls : '');
+    row.innerHTML = html;
+    CTX.pushFeed(row);
+  }
+
+  function mgUpper(text) { return String(text || '').toUpperCase(); }
+
+  // ---- the mission ribbon + the five task pips ---------------------------
+  function mgEnsureRibbon() {
+    var host = mgEl('stage');
+    if (!host) return null;
+    var ribbon = mgEl('mg-ribbon');
+    if (!ribbon) {
+      ribbon = document.createElement('div');
+      ribbon.id = 'mg-ribbon';
+      ribbon.innerHTML =
+        '<div class="mg-taskline" id="mg-taskline"></div>' +
+        '<div class="mg-mission" id="mg-mission"></div>';
+      host.appendChild(ribbon);
+    }
+    return ribbon;
+  }
+
+  function mgEnsurePips(count) {
+    var host = mgEl('stage');
+    if (!host) return null;
+    var pips = mgEl('mg-pips');
+    if (!pips) {
+      pips = document.createElement('div');
+      pips.id = 'mg-pips';
+      host.appendChild(pips);
+    }
+    while (pips.childNodes.length < count) {
+      var pip = document.createElement('div');
+      pip.className = 'mg-pip';
+      pip.innerHTML = '<span class="mg-fam"></span>';
+      pips.appendChild(pip);
+    }
+    return pips;
+  }
+
+  function mgRenderRibbon(mg) {
+    var ribbon = mgEnsureRibbon();
+    if (!ribbon || !mg) return;
+    var line = mgEl('mg-taskline');
+    var mission = mgEl('mg-mission');
+    var text = 'TASK ' + (mg.index + 1) + '/' + mg.count + ' · ' +
+      mgUpper(mg.family);
+    if (line && line.textContent !== text) line.textContent = text;
+    if (mission && mission.textContent !== (mg.mission || '')) {
+      mission.textContent = mg.mission || '';
+      // The full sentence stays reachable at .tiny, where the ribbon clamps.
+      ribbon.title = mg.mission || '';
+    }
+    var pips = mgEnsurePips((mg.pips || []).length);
+    if (!pips) return;
+    (mg.pips || []).forEach(function (p, i) {
+      var el = pips.childNodes[i];
+      if (!el) return;
+      var cls = 'mg-pip ' + p.state;
+      if (el.className !== cls) el.className = cls;
+      el.title = 'Task ' + (i + 1) + ' — ' + mgUpper(p.family) +
+        (p.mission ? ': ' + p.mission : '') + ' — ' + p.state;
+      var fam = el.firstChild;
+      if (fam && fam.textContent !== p.family) fam.textContent = p.family;
+    });
+  }
+
+  // ---- the agent's own 7x7 window, in the kept #fpv panel ----------------
+  function mgRenderAgentView(s, mg) {
+    var canvas = mgEl('fpv-canvas');
+    if (!canvas || !mg || !mg.view || !mg.view.length) return;
+    var box = canvas.parentNode;
+    var size = Math.max(56, Math.min(box ? box.clientWidth : 120,
+                                     box ? box.clientHeight : 120));
+    var dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(size * dpr)) {
+      canvas.width = Math.round(size * dpr);
+      canvas.height = Math.round(size * dpr);
+    }
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    var n = mg.view.length;
+    var cell = Math.floor(size / n);
+    var pad = Math.floor((size - cell * n) / 2);
+    for (var j = 0; j < n; j++) {
+      var row = mg.view[j];
+      for (var i = 0; i < row.length; i++) {
+        var ch = row.charAt(i);
+        // Every glyph is drawn as a CHIP, never as text, so nothing this
+        // panel draws can land outside the canvas at any --hudscale.
+        ctx.fillStyle = MG_GLYPH_COLOUR[ch] || '#3a352d';
+        ctx.fillRect(pad + i * cell, pad + j * cell, cell - 1, cell - 1);
+        if (ch === 'A') {
+          ctx.fillStyle = '#f2e8d8';
+          ctx.fillRect(pad + i * cell + Math.floor(cell / 3),
+                       pad + j * cell + 2,
+                       Math.max(1, Math.floor(cell / 3)),
+                       Math.max(1, Math.floor(cell / 3)));
+        }
+      }
+    }
+    var nameEl = mgEl('fpv-name');
+    if (nameEl) {
+      var text = 'ALPHA · FACING ' + mgUpper(mg.dir);
+      if (nameEl.textContent !== text) nameEl.textContent = text;
+    }
+  }
+
+  // ---- the scorebug plate ------------------------------------------------
+  function mgRenderPlate(s, mg) {
+    var plate = document.querySelector('.plate[data-team="red"]');
+    if (!plate || !mg) return;
+    var num = mgEl('lives-red');
+    if (num) {
+      var text = mg.solved + '/' + mg.count;
+      if (num.textContent !== text) num.textContent = text;
+    }
+    var chip = mgEl('hill-red');
+    if (chip) {
+      chip.className = 'hillchip mg-carry' + (mg.carrying ? ' held' : '');
+      var carry = mg.carrying ? mgUpper(mg.carrying) : '—';
+      if (chip.textContent !== carry) chip.textContent = carry;
+      chip.title = mg.carrying ? 'Carrying the ' + mg.carrying
+                               : 'Carrying nothing';
+    }
+    var tags = mgEl('tags-red');
+    if (tags) {
+      tags.className = 'mg-alias';
+      var sub = 'ALPHA · score ' + mg.score +
+        (mg.fallbacks > 0 ? ' · ↯' + mg.fallbacks : '');
+      if (tags.textContent !== sub) tags.textContent = sub;
+    }
+  }
+
+  function mgRenderClock(s, mg) {
+    if (!mg) return;
+    var big = mgEl('clock-time');
+    var cap = mgEl('clock-caption');
+    if (s.ph === 'lobby') return;   // the shared chrome owns the lobby text
+    if (big) {
+      var text = 'SOLVED ' + mg.solved + '/' + mg.count;
+      if (big.textContent !== text) big.textContent = text;
+    }
+    if (cap) {
+      var line = 'task ' + (mg.index + 1) + '/' + mg.count + ' · turn ' +
+        Math.min(mg.turn, mg.cap) + '/' + mg.cap + ' · tick ' + s.t +
+        ' · seen ' + mg.seen + '/' + mg.cells + ' · score ' + mg.score;
+      if (cap.textContent !== line) cap.textContent = line;
+    }
+  }
+
+  function mgRenderEndcard(s, mg) {
+    if (s.ph !== 'gameover' || !mg) return;
+    var head = mgEl('ec-headline');
+    if (head) {
+      head.textContent = mg.solved + ' OF ' + mg.count + ' SOLVED — PAR ' +
+        (s.over && s.over.par !== undefined ? s.over.par : '?') +
+        (s.over && s.over.winner === 'red' ? ' MET' : ' MISSED');
+    }
+    var how = mgEl('ec-how');
+    if (how) {
+      how.textContent = mg.seen + ' of ' + (mg.cells * mg.count) +
+        ' cells seen across the five boards, ' + mg.doors +
+        ' doors opened, ' + mg.deaths + ' death' +
+        (mg.deaths === 1 ? '' : 's') + ', ' + mg.crashes + ' crash' +
+        (mg.crashes === 1 ? '' : 'es') + ', ' + mg.fallbacks +
+        ' fallback turn' + (mg.fallbacks === 1 ? '' : 's') + ' · SCORE ' +
+        mg.score;
+    }
+    var cond = mgEl('ec-wincond');
+    if (cond && s.over) {
+      cond.textContent = 'Ended ' + s.over.reason + ' (' + s.over.endRule + ')';
+    }
+    var teamsEl = mgEl('ec-teams');
+    if (teamsEl) {
+      var rows = '<div class="ec-thead"><span>Task</span><span>Mission</span>' +
+        '<span>Result</span><span>Turns</span><span>Credits</span></div>';
+      (mg.pips || []).forEach(function (p, i) {
+        rows += '<div class="ec-row"><span>' + (i + 1) + ' ' +
+          mgUpper(p.family) + '</span><span>' + CTX.esc(p.mission || '—') +
+          '</span><span>' + p.state + '</span><span>' + p.turns +
+          '</span><span>' + p.credits + '/3</span></div>';
+      });
+      if (teamsEl.getAttribute('data-mg') !== String(mg.solved) + mg.score) {
+        teamsEl.innerHTML = rows;
+        teamsEl.setAttribute('data-mg', String(mg.solved) + mg.score);
+      }
+    }
+  }
+
+  // ---- events ------------------------------------------------------------
+  // Returns true when this block handled the event, so the inherited switch
+  // never doubles it.
+  function mgEvent(e, s, ctx) {
+    CTX = ctx;
+    switch (e.k) {
+      case 'taskstart':
+        mgBeat(s, e.t, 'taskstart',
+          'Task ' + (e.i + 1) + ' of ' + e.of + ' — ' + mgUpper(e.family) +
+          ': ' + e.mission + ' — click to jump here');
+        mgFeed('<span class="mg-note">TASK ' + (e.i + 1) + ' — ' +
+          mgUpper(e.family) + ':</span> <span class="mg-say">&ldquo;' +
+          CTX.esc(e.mission) + '&rdquo;</span>');
+        CTX.banner(mgUpper(e.family) + ' — ' + e.mission, 'amb');
+        return true;
+      case 'solved':
+        mgBeat(s, e.t, 'solved',
+          'Task ' + (e.i + 1) + ' solved in ' + e.turns +
+          ' turns — click to jump here');
+        mgFeed('<span class="mg-note">TASK ' + (e.i + 1) +
+          ' SOLVED IN ' + e.turns + ' TURNS</span>');
+        return true;
+      case 'failed':
+        mgBeat(s, e.t, 'failed',
+          'Task ' + (e.i + 1) + ' lost (' + e.why + ') — click to jump here');
+        mgFeed('<span class="mg-note">TASK ' + (e.i + 1) + ' LOST — ' +
+          mgUpper(e.why) + '</span>');
+        return true;
+      case 'unlock':
+        mgBeat(s, e.t, 'unlock',
+          'Unlocked the ' + e.color + ' door at (' + e.x + ',' + e.y +
+          ') — click to jump here');
+        mgFeed('UNLOCKED THE ' + mgUpper(e.color) + ' DOOR AT (' + e.x + ',' +
+          e.y + ')');
+        return true;
+      case 'produce':
+        mgBeat(s, e.t, 'produce',
+          'Rule found: ' + e.a + ' + ' + e.b + ' → ' + e.out +
+          ' — click to jump here');
+        mgFeed('<span class="mg-note">RULE FOUND:</span> ' +
+          mgUpper(e.a) + ' + ' + mgUpper(e.b) + ' → ' + mgUpper(e.out));
+        return true;
+      case 'fallback':
+        mgBeat(s, e.t, 'fallback',
+          'Missed the call (' + e.cause + ') — click to jump here');
+        mgFeed('MISSED THE CALL — scout plan (' + CTX.esc(e.cause) + ')');
+        return true;
+      case 'end':
+        mgBeat(s, e.t, 'end',
+          e.solved + ' of ' + e.of + ' solved — click to jump here');
+        return false;    // the endcard is state-driven; let the page see it
+      case 'say':
+        mgFeed('<span class="who red">Alpha</span>' +
+          '<span class="glyph">:</span><span class="mg-say">&ldquo;' +
+          CTX.esc(e.text) + '&rdquo;</span>');
+        return true;
+      case 'plan':
+        mgFeed('PLAN — ' + CTX.esc(e.verbs || '(wait)') +
+          (e.truncated ? ' <span class="mg-note">CUT OFF</span>' : '') +
+          (e.dropped ? ' <span class="mg-note">' + e.dropped +
+            ' DROPPED</span>' : ''));
+        return true;
+      case 'pickup':
+        mgFeed('PICKED UP THE ' + mgUpper(e.color) + ' ' + mgUpper(e.type));
+        return true;
+      case 'drop':
+        mgFeed('DROPPED THE ' + mgUpper(e.color) + ' ' + mgUpper(e.type) +
+          ' AT (' + e.x + ',' + e.y + ')');
+        return true;
+      case 'open':
+        mgFeed('OPENED THE ' + mgUpper(e.color) + ' DOOR AT (' + e.x + ',' +
+          e.y + ')');
+        return true;
+      case 'close':
+        return true;      // closing a door behind you is not news
+      case 'subgoal':
+        mgFeed('SUBGOAL — ' + mgUpper(String(e.label).replace(/_/g, ' ')) +
+          ' (' + (e.which + 1) + '/3)');
+        return true;
+      case 'lava':
+        mgFeed('STEPPED INTO LAVA AT (' + e.x + ',' + e.y + ')');
+        return true;
+      case 'crash':
+        mgFeed('WALKED INTO A GREY BALL AT (' + e.x + ',' + e.y + ')');
+        return true;
+      case 'budget':
+        mgFeed('BUDGET GUARD — ' + e.remaining_s + 's left, scripted from here');
+        return true;
+      case 'turn':
+        return true;      // the ribbon and the clock are that readout
+    }
+    return false;
+  }
+
+  function mgDirectives(s) {
+    var records = s.directives;
+    if (!records || !records.length) return;
+    for (var i = 0; i < records.length; i++) {
+      var d = records[i];
+      if (d.k !== 'directive') continue;
+      var key = d.turn + ':' + d.slot;
+      if (mgSeenDirective[key]) continue;
+      mgSeenDirective[key] = true;
+    }
+  }
+
+  function mgFrame(s, ctx, jumped) {
+    CTX = ctx;
+    if (jumped) { mgPlaced = {}; mgSeenDirective = {}; }
+    var mg = s.mg;
+    if (!mg) return;
+    mgRenderRibbon(mg);
+    mgRenderPlate(s, mg);
+    mgRenderClock(s, mg);
+    mgRenderAgentView(s, mg);
+    mgRenderEndcard(s, mg);
+    mgDirectives(s);
+    if (mg.index !== mgLastTask) mgLastTask = mg.index;
+    // The up-front beat timeline (shipped ONCE by the load-time pre-scan)
+    // places every marker before playback reaches it, so the scrubber draws
+    // at FULL WIDTH on the first frame instead of growing in.
+    if (s.beats && s.beats.length) {
+      for (var i = 0; i < s.beats.length; i++) {
+        var b = s.beats[i];
+        switch (b.k) {
+          case 'taskstart':
+            mgBeat(s, b.t, 'taskstart', 'Task ' + (b.i + 1) + ' — ' +
+              mgUpper(b.family) + ' — click to jump here');
+            break;
+          case 'solved':
+            mgBeat(s, b.t, 'solved', 'Task ' + (b.i + 1) + ' solved in ' +
+              b.turns + ' turns — click to jump here');
+            break;
+          case 'failed':
+            mgBeat(s, b.t, 'failed', 'Task ' + (b.i + 1) + ' lost (' + b.why +
+              ') — click to jump here');
+            break;
+          case 'unlock':
+            mgBeat(s, b.t, 'unlock', 'Unlocked the ' + b.color +
+              ' door — click to jump here');
+            break;
+          case 'produce':
+            mgBeat(s, b.t, 'produce', 'Rule found: ' + b.a + ' + ' + b.b +
+              ' → ' + b.out + ' — click to jump here');
+            break;
+          case 'fallback':
+            mgBeat(s, b.t, 'fallback', 'Missed the call (' + b.cause +
+              ') — click to jump here');
+            break;
+          case 'end':
+            mgBeat(s, b.t, 'end', b.solved + ' of ' + b.of +
+              ' solved — click to jump here');
+            break;
+        }
+      }
+    }
+  }
+
+  window.PaintballChrome = {
+    install: function (ctx) { CTX = ctx; },
+    frame: mgFrame,
+    event: mgEvent
+  };
+})();
+</script>
+
+</body>
+</html>

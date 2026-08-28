@@ -1,0 +1,641 @@
+{
+  "$schema": "https://softmax.com/schemas/coworld-manifest.json",
+  "tags": [
+    "gridworld",
+    "single-agent",
+    "instruction-following",
+    "exploration",
+    "minigrid"
+  ],
+  "episode_timeout_minutes": 20,
+  "game": {
+    "name": "minigrid",
+    "owner": "daveey@softmax.com",
+    "description": "One cog, alone, in a 13x13 walled gridworld it can only see 7x7 of, with a sentence telling it what to do: cross the lava gap, find the yellow key and unlock the door, thread four rooms behind closed doors, fetch the blue ball from a locked side room, follow a BabyAI instruction, or work out a hidden production rule by pushing objects together. Five tasks in a row, eleven turns each; the score is how many it solved.",
+    "image": "{{MINIGRID_IMAGE}}",
+    "source_url": "https://github.com/Metta-AI/cogame-minigrid",
+    "replay_viewer": {
+      "bundle": "static-replay-viewer"
+    },
+    "runnable": {
+      "type": "game",
+      "run": [
+        "/bin/minigrid"
+      ],
+      "env": {
+        "ANTHROPIC_API_KEY_URI": "secret://coworld/minigrid/anthropic_api_key"
+      }
+    },
+    "protocols": {
+      "player": {
+        "type": "uri",
+        "value": "https://github.com/Metta-AI/cogame-minigrid/blob/main/docs/PROTOCOL.md"
+      },
+      "global": {
+        "type": "uri",
+        "value": "https://github.com/Metta-AI/cogame-minigrid/blob/main/docs/PROTOCOL.md"
+      }
+    },
+    "docs": {
+      "readme": {
+        "type": "uri",
+        "value": "https://github.com/Metta-AI/cogame-minigrid/blob/main/README.md"
+      },
+      "pages": [
+        {
+          "id": "rules.md",
+          "title": "Rules",
+          "content": {
+            "type": "uri",
+            "value": "https://github.com/Metta-AI/cogame-minigrid/blob/main/docs/RULES.md"
+          }
+        },
+        {
+          "id": "actions.md",
+          "title": "Actions and the reply format",
+          "content": {
+            "type": "uri",
+            "value": "https://github.com/Metta-AI/cogame-minigrid/blob/main/docs/ACTIONS.md"
+          }
+        },
+        {
+          "id": "porting.md",
+          "title": "What this is and is not a port of",
+          "content": {
+            "type": "uri",
+            "value": "https://github.com/Metta-AI/cogame-minigrid/blob/main/docs/PORTING-MINIGRID.md"
+          }
+        }
+      ]
+    },
+    "config_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tokens",
+        "players"
+      ],
+      "properties": {
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 1,
+          "description": "runner-injected seat tokens; never present in a shipped game_config"
+        },
+        "players": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 0,
+          "maxItems": 1
+        },
+        "taskLadder": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "enum": [
+              "lavagap",
+              "doorkey",
+              "multiroom",
+              "keycorridor",
+              "dynamic",
+              "babyai",
+              "xland"
+            ]
+          }
+        },
+        "gridSize": {
+          "type": "integer",
+          "minimum": 13,
+          "maximum": 13,
+          "default": 13
+        },
+        "viewSize": {
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 7,
+          "default": 7
+        },
+        "turnTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 12
+        },
+        "taskTurnCap": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 11
+        },
+        "taskCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 5
+        },
+        "maxTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400,
+          "default": 55
+        },
+        "maxTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4000,
+          "default": 660
+        },
+        "parTasks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 3
+        },
+        "obstacleCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "default": 6
+        },
+        "xlandRules": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 3,
+          "default": 3
+        },
+        "xlandObjects": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 8,
+          "default": 6
+        },
+        "babyaiObjects": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8,
+          "default": 6
+        },
+        "maxActionsPerTurn": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "default": 12
+        },
+        "macroPrimitiveCap": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 40
+        },
+        "spinTurns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "default": 12
+        },
+        "attempt1Ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 60000,
+          "default": 6000
+        },
+        "retryMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 60000,
+          "default": 3000
+        },
+        "turnBudgetMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 120000,
+          "default": 9500
+        },
+        "turnSpacingMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000,
+          "default": 2600
+        },
+        "wallClockBudgetSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 660,
+          "default": 660
+        },
+        "lobbyJoinTimeoutTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4800,
+          "default": 2400
+        },
+        "gameOverTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4800,
+          "default": 480
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "randomised by the runner; NEVER shown to the seat"
+        },
+        "minPlayers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "default": 1
+        },
+        "num_agents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1,
+          "default": 1
+        },
+        "fastMode": {
+          "type": "boolean",
+          "default": true
+        },
+        "showPlayerLabels": {
+          "type": "boolean",
+          "default": false
+        },
+        "model": {
+          "type": "string"
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192,
+          "default": 900
+        }
+      }
+    },
+    "results_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "win": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "winner": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "deadline",
+            "fault"
+          ]
+        },
+        "endRule": {
+          "type": "string",
+          "enum": [
+            "gauntletComplete",
+            "turnCap",
+            "wallClock",
+            "fault"
+          ]
+        },
+        "variant": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "taskCount": {
+          "type": "integer"
+        },
+        "parTasks": {
+          "type": "integer"
+        },
+        "tasksSolved": {
+          "type": "integer"
+        },
+        "progressTotal": {
+          "type": "integer"
+        },
+        "speedTotal": {
+          "type": "integer"
+        },
+        "taskFamilies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "taskMissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "taskSolved": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "taskOutcome": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "solved",
+              "timeout",
+              "died",
+              "crashed",
+              "unreached"
+            ]
+          }
+        },
+        "taskTurns": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "taskTicks": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "taskProgress": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "deaths": {
+          "type": "integer"
+        },
+        "crashes": {
+          "type": "integer"
+        },
+        "taskCellsSeen": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "cellsTotal": {
+          "type": "integer"
+        },
+        "doorsOpened": {
+          "type": "integer"
+        },
+        "objectsPickedUp": {
+          "type": "integer"
+        },
+        "productionsFired": {
+          "type": "integer"
+        },
+        "primitivesExecuted": {
+          "type": "integer"
+        },
+        "actionsDropped": {
+          "type": "integer"
+        },
+        "macrosUnreachable": {
+          "type": "integer"
+        },
+        "repliesRepaired": {
+          "type": "integer"
+        },
+        "finalTick": {
+          "type": "integer"
+        },
+        "turnsPlayed": {
+          "type": "integer"
+        },
+        "policyKinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "llmTurns": {
+          "type": "integer"
+        },
+        "fallbackTurns": {
+          "type": "integer"
+        },
+        "deadSeats": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "stopDetail": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "player": [
+    {
+      "id": "scout",
+      "type": "policy",
+      "name": "scout",
+      "description": "The published scripted baseline: a deterministic frontier explorer with a goal check. It is also the server-side fallback whenever a seat's LLM call fails twice, so every episode always has a legal plan.",
+      "image": "{{MINIGRID_IMAGE}}",
+      "run": [
+        "/bin/minigrid-player"
+      ],
+      "source_url": "https://github.com/Metta-AI/cogame-minigrid",
+      "env": {
+        "PLAYER_SCRIPTED": "scout",
+        "PLAYER_POLICY_LABEL": "scout"
+      },
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "cpu": "1"
+        }
+      }
+    }
+  ],
+  "variants": [
+    {
+      "id": "gauntlet",
+      "name": "Gauntlet (1 cog, 5 MiniGrid tasks)",
+      "description": "Five partially observed 13x13 gridworlds, one after another, each with a sentence telling the cog what to do: cross the lava gap, find the yellow key and unlock the door, thread four rooms behind closed doors, fetch the blue ball from a locked side room, and follow one BabyAI instruction. The cog sees only a 7x7 window and gets eleven turns a task. Score is how many of the five it solved.",
+      "game_config": {
+        "players": [
+          {
+            "name": "Alpha"
+          }
+        ],
+        "num_agents": 1,
+        "minPlayers": 1,
+        "gridSize": 13,
+        "viewSize": 7,
+        "turnTicks": 12,
+        "taskTurnCap": 11,
+        "taskCount": 5,
+        "maxTurns": 55,
+        "maxTicks": 660,
+        "obstacleCount": 6,
+        "xlandRules": 3,
+        "xlandObjects": 6,
+        "babyaiObjects": 6,
+        "maxActionsPerTurn": 12,
+        "macroPrimitiveCap": 40,
+        "spinTurns": 12,
+        "taskLadder": [
+          "lavagap",
+          "doorkey",
+          "multiroom",
+          "keycorridor",
+          "babyai"
+        ],
+        "parTasks": 3,
+        "attempt1Ms": 6000,
+        "retryMs": 3000,
+        "turnBudgetMs": 9500,
+        "turnSpacingMs": 2600,
+        "wallClockBudgetSeconds": 660,
+        "lobbyJoinTimeoutTicks": 2400,
+        "fastMode": true,
+        "showPlayerLabels": false
+      }
+    },
+    {
+      "id": "xland",
+      "name": "XLand rules (1 cog, hidden production rules)",
+      "description": "A moving-obstacle warm-up, then three worlds whose rules are secret: six objects, a sentence naming a thing that does not exist yet, and a hidden table of three recipes that turn objects pushed together into new ones. The only way to learn a recipe is to try it, and each of the three worlds resamples the table. Ends on one BabyAI instruction so the two variants share a final task.",
+      "game_config": {
+        "players": [
+          {
+            "name": "Alpha"
+          }
+        ],
+        "num_agents": 1,
+        "minPlayers": 1,
+        "gridSize": 13,
+        "viewSize": 7,
+        "turnTicks": 12,
+        "taskTurnCap": 11,
+        "taskCount": 5,
+        "maxTurns": 55,
+        "maxTicks": 660,
+        "obstacleCount": 6,
+        "xlandRules": 3,
+        "xlandObjects": 6,
+        "babyaiObjects": 6,
+        "maxActionsPerTurn": 12,
+        "macroPrimitiveCap": 40,
+        "spinTurns": 12,
+        "taskLadder": [
+          "dynamic",
+          "xland",
+          "xland",
+          "xland",
+          "babyai"
+        ],
+        "parTasks": 2,
+        "attempt1Ms": 6000,
+        "retryMs": 3000,
+        "turnBudgetMs": 9500,
+        "turnSpacingMs": 2600,
+        "wallClockBudgetSeconds": 660,
+        "lobbyJoinTimeoutTicks": 2400,
+        "fastMode": true,
+        "showPlayerLabels": false
+      }
+    }
+  ],
+  "certification": {
+    "players": [
+      {
+        "player_id": "scout"
+      }
+    ],
+    "game_config": {
+      "players": [
+        {
+          "name": "Alpha"
+        }
+      ],
+      "num_agents": 1,
+      "minPlayers": 1,
+      "gridSize": 13,
+      "viewSize": 7,
+      "turnTicks": 12,
+      "taskTurnCap": 11,
+      "taskCount": 5,
+      "maxTurns": 55,
+      "maxTicks": 660,
+      "obstacleCount": 6,
+      "xlandRules": 3,
+      "xlandObjects": 6,
+      "babyaiObjects": 6,
+      "maxActionsPerTurn": 12,
+      "macroPrimitiveCap": 40,
+      "spinTurns": 12,
+      "seed": 42,
+      "taskLadder": [
+        "lavagap",
+        "doorkey",
+        "multiroom",
+        "keycorridor",
+        "babyai"
+      ],
+      "parTasks": 3,
+      "wallClockBudgetSeconds": 240,
+      "lobbyJoinTimeoutTicks": 600,
+      "fastMode": true,
+      "showPlayerLabels": false
+    }
+  }
+}
