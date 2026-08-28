@@ -203,6 +203,18 @@
           try { win.MinigridChrome.frame(state, ctx, false); }
           catch (e) { throw new Error('frame: ' + e.message); }
         });
+        // The 7x7 agent-view inset is a REQUIRED spectator readout, and the
+        // inherited renderFpv() reveals #fpv only for a paintball POV seat —
+        // a key this fork never sends, which left the panel computed every
+        // frame and never displayed (review r1, N1). Probe the SHIPPED page's
+        // computed style, at every width, so a regression back to
+        // display:none is red here instead of invisible.
+        var fpv = doc.getElementById('fpv');
+        if (!fpv) throw new Error('the shipped page has no #fpv panel');
+        if (win.getComputedStyle(fpv).display === 'none') {
+          throw new Error('#fpv (the agent view 7x7 inset) is display:none at ' +
+                          width + 'px after a frame that carries a view');
+        }
         total += transcribe(doc, canvas);
       });
     } catch (e) {

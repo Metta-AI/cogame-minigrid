@@ -389,6 +389,17 @@ button.beat-marker {
       var text = 'ALPHA · FACING ' + mgUpper(mg.dir);
       if (nameEl.textContent !== text) nameEl.textContent = text;
     }
+    // SHOW the panel. The inherited renderFpv() reveals #fpv only while a seat
+    // is in the paintball POV lens (`s.pov >= 0 && s.fp`), and this fork sends
+    // neither key, so it clears `on` on every frame and the window this game
+    // exists to show stayed display:none. Here the 7x7 window is a REQUIRED
+    // spectator readout (design note §Readouts item 3), not an opt-in lens, so
+    // it is shown whenever there is a view to draw. This runs after the
+    // inherited render (the page's frame path calls MinigridChrome.frame last),
+    // and a frame with no `mg.view` — the lobby — returns above and leaves the
+    // inherited toggle's `off` standing.
+    var panel = mgEl('fpv');
+    if (panel) panel.classList.add('on');
   }
 
   // ---- the scorebug plate ------------------------------------------------
