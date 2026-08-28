@@ -190,7 +190,9 @@
         if (typeof win.dispatchEvent === 'function') {
           win.dispatchEvent(new win.Event('resize'));
         }
-        var ctx = win.PB_CTX || win.MG_CTX;
+        // The page's own PB_CTX lives inside the chrome IIFE, so it is not
+        // reachable from here; the block keeps the context install() gave it.
+        var ctx = win.PB_CTX || null;
         [400, 640].forEach(function (tick) {
           var state = worstState(tick);
           EVENTS.forEach(function (event) {

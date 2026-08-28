@@ -445,7 +445,11 @@ button.beat-marker {
   // Returns true when this block handled the event, so the inherited switch
   // never doubles it.
   function mgEvent(e, s, ctx) {
-    CTX = ctx;
+    // A harness (tools/ci/renderer_fixture.html) may drive these entry points
+    // without a context, because the page's own PB_CTX lives inside the
+    // chrome IIFE. install() already gave us one; never overwrite it with
+    // undefined.
+    if (ctx) CTX = ctx;
     switch (e.k) {
       case 'taskstart':
         mgBeat(s, e.t, 'taskstart',
@@ -548,7 +552,7 @@ button.beat-marker {
   }
 
   function mgFrame(s, ctx, jumped) {
-    CTX = ctx;
+    if (ctx) CTX = ctx;
     if (jumped) { mgPlaced = {}; mgSeenDirective = {}; }
     var mg = s.mg;
     if (!mg) return;

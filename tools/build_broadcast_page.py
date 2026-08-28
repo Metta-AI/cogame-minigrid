@@ -118,6 +118,11 @@ JS_REWRITES = [
 """,
      """  // MINIGRID: the opt-out param goes with the panel it hid.
 """),
+    # There is ONE cog and it is red: the blue/green/yellow locker-room webps
+    # are deleted with the teams they belonged to, so the loading scene must
+    # not request them (four 404s per open otherwise).
+    ("""    ['green', 'blue', 'yellow', 'red'].forEach(function (bot) {""",
+     """    ['red'].forEach(function (bot) {"""),
     ("""  core.attachMinimap($('minimap-canvas'));""",
      """  // MINIGRID: nothing to attach — broadcast_core.js tolerates never being
   // attached (its surface stays null and its draw returns on the first guard)."""),

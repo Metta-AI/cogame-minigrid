@@ -1539,7 +1539,7 @@ body[data-embed] #board { top: 0; height: 100%; }</style>
                 { f: 6, w: 16.73, h: 21.06 }] }
     };
     var spritesEl = $('lk-sprites');
-    ['green', 'blue', 'yellow', 'red'].forEach(function (bot) {
+    ['red'].forEach(function (bot) {
       var b = LK_BOTS[bot];
       var maxW = 0, maxH = 0;
       b.poses.forEach(function (p) {
@@ -4533,7 +4533,11 @@ button.beat-marker {
   // Returns true when this block handled the event, so the inherited switch
   // never doubles it.
   function mgEvent(e, s, ctx) {
-    CTX = ctx;
+    // A harness (tools/ci/renderer_fixture.html) may drive these entry points
+    // without a context, because the page's own PB_CTX lives inside the
+    // chrome IIFE. install() already gave us one; never overwrite it with
+    // undefined.
+    if (ctx) CTX = ctx;
     switch (e.k) {
       case 'taskstart':
         mgBeat(s, e.t, 'taskstart',
@@ -4636,7 +4640,7 @@ button.beat-marker {
   }
 
   function mgFrame(s, ctx, jumped) {
-    CTX = ctx;
+    if (ctx) CTX = ctx;
     if (jumped) { mgPlaced = {}; mgSeenDirective = {}; }
     var mg = s.mg;
     if (!mg) return;
