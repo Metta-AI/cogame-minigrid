@@ -47,10 +47,14 @@
 
   var WIDTHS = [960, 640, 360];
   var SAY = (function () {
-    // Exactly 140 runes, with 4-byte emoji sitting on the boundary.
+    // Exactly 140 runes, with 4-byte emoji sitting on the boundary. The base
+    // sentence is 130 runes, so it is REPEATED before the slice: slicing 138
+    // out of 130 shipped a 132-rune "worst case" that was 8 runes short of the
+    // cap, which is exactly what the full-length assertion below now catches.
     var base = 'I have the yellow key; opening the door at (6,3) and heading east for the green goal square before the lava column closes the gap ';
-    var out = Array.from(base).slice(0, 138).join('') + '\uD83E\uDDE9\uD83D\uDD11';
-    return out;
+    var runes = Array.from(base);
+    while (runes.length < 138) runes = runes.concat(Array.from(base));
+    return runes.slice(0, 138).join('') + '\uD83E\uDDE9\uD83D\uDD11';
   })();
   var MISSION = 'put the red ball next to the blue box, then use the yellow key to open the door and get to the green goal square';
 
