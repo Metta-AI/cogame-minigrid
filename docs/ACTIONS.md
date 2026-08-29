@@ -15,7 +15,7 @@ JSON object is a parse failure; a reply with a valid `say` and no `actions` is
 
 | Field | Type | Cap / domain |
 |---|---|---|
-| `actions` | array | **≤ 24 entries**. Entries past the cap are dropped and counted in `actionsDropped`. Absent or empty = twenty-four `wait` ticks, and the reply is still usable |
+| `actions` | array | **≤ 12 entries**. Entries past the cap are dropped and counted in `actionsDropped`. Absent or empty = twelve `wait` ticks, and the reply is still usable |
 | `actions[].do` | string | **≤ 8 runes**; `left` \| `right` \| `forward` \| `pickup` \| `drop` \| `toggle` \| `wait` \| `goto` \| `face`, lower-cased before matching |
 | `actions[].x`, `.y` | integer | required iff `do == "goto"`; **clamped to 0…12**; a non-integer or absent value **drops the entry** |
 | `actions[].dir` | string | required iff `do == "face"`; **≤ 5 runes**; matched case-insensitively against `N E S W north east south west`; anything else drops the entry |
@@ -52,7 +52,7 @@ never by byte index.
   reached cell the path ends on the nearest such cell and a final `face` toward
   the target is appended; otherwise the macro yields **zero** primitives and
   counts as `unreachable`.
-- Bounded by 40 primitives; the whole turn's queue is then truncated to 24.
+- Bounded by 40 primitives; the whole turn's queue is then truncated to 12.
 
 `goto` refuses to path through `?` cells and through lava. That is why walking
 into the unknown costs an explicit `forward` from you.
@@ -61,11 +61,10 @@ into the unknown costs an explicit `forward` from you.
 
 ```json
 {
-  "you": "Gamma",
-  "lane": 2,
+  "you": "Alpha",
   "task": {"index": 2, "of": 5, "family": "doorkey",
            "mission": "use the yellow key to open the door and then get to the green goal square",
-           "turns_left": 4, "ticks_left": 105},
+           "turns_left": 8, "ticks_left": 105},
   "turn": 14, "tick": 159,
   "world": {"size": 13, "view": 7, "legend": {"…": "…"}},
   "agent": {"x": 4, "y": 4, "dir": "east",
@@ -93,18 +92,11 @@ left, and the agent's own cell reads `A`. `known` is always **13 strings of 13
 characters** in world orientation. `objects` is sorted ascending by `(y, x)` and
 lists only **uncarried** objects — a carried object is out of the world.
 `last_plan.executed` lists the **primitives that actually ran**, so you can see
-a `goto` get cut off rather than guess. `objects` carries at most the **24 most
-recently observed** entries and `productions` at most the **last 12**; the whole
-observation is capped at **4 000 characters**, shed by dropping whole `objects`
-entries from the least-recently-seen end — `view` and `known` are never
-truncated, because they are the game.
+a `goto` get cut off rather than guess.
 
 **Hidden from you:** the episode seed; every cell never observed; every layout
 parameter; the contents of an unopened box; the `xland` production rule table
 and any rule you have not fired yourself; future obstacle motion; the missions
-and layouts of phases not yet started; your own score; your real policy/player
-name; **and every fact about every other lane** — no rival alias, score,
-progress, position, board or `say` appears in any observation. You cannot tell
-whether you are racing three LLMs, three baselines or a mix. Nothing about
-identity ever reaches a prompt — in-game you are `Alpha`, `Beta`, `Gamma` or
-`Delta` and nothing else.
+and layouts of tasks not yet started; your own score; and your real
+policy/player name. Nothing about identity ever reaches a prompt — in-game you
+are `Alpha` and nothing else.

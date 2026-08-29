@@ -301,7 +301,7 @@ suite "minigrid viewer":
     check "if (jumped) return" notin block0
     ## and the clock caption carries the playhead tick, so a stale caption is
     ## visible (v1 read TICK 299 after a seek back to 158).
-    check "'tick ' + Math.max(0, s.t - (s.st || 0)) + '/'" in block0
+    check "'tick ' + s.t + '/' + mg.maxTicks" in block0
 
   test "54. the feed is a TABLE, and `say` rows are never dropped":
     let split = page.find("MINIGRID additions to the inherited coworld-ctf chrome")

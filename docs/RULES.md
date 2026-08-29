@@ -1,30 +1,16 @@
 # Rules
 
-## Four isolated lanes
-
-`num_agents` is **4**, and seat *s* plays a complete PRIVATE instance of the
-same seeded gauntlet. Every generator draw is `mix64(seed, phaseIndex, salt)`
-and **the lane index is not an input**, so all four lanes hold byte-identical
-layouts, missions and rule tables. `stepLane` is a pure function of one lane's
-own state and that lane's own primitive: nothing crosses a lane — no position,
-no `say`, no score, no scoreboard.
-
 ## The gauntlet and the clock
 
-- **Tick** — one primitive action by one lane's agent.
-- **`turnTicks` = 24** — every command turn executes at most twenty-four
-  primitives per lane.
-- **`taskTurnCap` = 6** turns per phase ⇒ at most 144 ticks per phase per lane.
-- **`taskCount` = 5** phases per episode ⇒ **`maxTurns` = 30**,
-  **`maxTicks` = 720**.
-- Phases run **strictly in the variant's declared order**, one at a time, and
-  **their boundaries are synchronised across all four lanes**: every lane starts
-  phase *k* on the same turn. The seat is told the family and the mission of the
-  **current** phase only.
-- A lane whose phase finishes (solved, died, crashed) **stops stepping for the
-  rest of the turn** and idles — no LLM call, no ticks — until every lane has
-  resolved the phase. Turns saved this way are **not** transferable, but
-  finishing early still pays: `speed` is scored per lane.
+- **Tick** — one primitive action by the agent.
+- **`turnTicks` = 12** — every command turn executes at most twelve primitives.
+- **`taskTurnCap` = 11** turns per task ⇒ at most 132 ticks per task.
+- **`taskCount` = 5** tasks per episode ⇒ **`maxTurns` = 55**, **`maxTicks` = 660**.
+- Tasks run **strictly in the variant's declared order**, one at a time. The seat
+  is told the family and the mission of the **current** task only.
+- A task that finishes (solved, died, crashed) **ends its turn immediately**;
+  the remaining ticks of that turn are skipped and the next task begins on the
+  next turn. Turns saved this way are **not** transferable.
 
 The ladder of families is public (below). The **layouts are seeded and never
 disclosed**: the episode `seed` never appears in any observation or prompt, and
@@ -33,26 +19,22 @@ any layout parameter.
 
 ## Turn resolution order
 
-1. If every lane has resolved the current phase, record it and advance ALL FOUR
-   lanes to the next together. If there is no next phase, end the episode.
-2. For each lane in ascending seat index, recompute its 7 × 7 visible set and
-   merge it into that lane's known map.
-3. Issue **ONE batch** carrying one request per **active** seat — an active seat
-   is one whose lane has not resolved the phase (attempt-1 deadline
-   `attempt1Ms` = 11 s). Seats are never queried sequentially.
-4. Every seat that timed out, errored, returned non-JSON or returned no usable
-   `actions` is retried **once**, again as a single batch (`retryMs` = 6 s).
-5. Still nothing → the **`scout`** scripted plan is computed server-side **for
-   that lane** and a `fallback` record is written with the TRUE cause.
-6. Validate and expand each seat's plan against **its own lane's** known map, in
-   the order the reply lists it: entries past `maxActionsPerTurn` = 24 are
-   dropped and counted; an entry that does not validate is **dropped, never
-   rewritten**; macros expand against the **known map as of turn start**, each
-   yielding at most `macroPrimitiveCap` = 40 primitives; the whole queue is
-   truncated to 24.
-7. Each seat's `say` (≤ 140 runes) and `notes` (≤ 300 runes) are sanitised **on
-   rune boundaries** and written as that seat's `directive` replay record.
-8. `turnSpacingMs` = 11 s is a floor on the wall clock between BATCH starts.
+1. If the current task has finished, record its result and start the next. If
+   there is no next task, end the episode.
+2. Recompute the 7 × 7 visible set and merge it into the known map.
+3. Issue the seat's request (attempt-1 deadline `attempt1Ms` = 6 s).
+4. On timeout / error / non-JSON / no usable `actions`, retry **once**
+   (`retryMs` = 3 s).
+5. Still nothing → the **`scout`** scripted plan is computed server-side and a
+   `fallback` record is written.
+6. Validate and expand the plan, in the order the reply lists it:
+   entries past `maxActionsPerTurn` = 12 are dropped and counted; an entry that
+   does not validate is **dropped, never rewritten**; macros expand against the
+   **known map as of turn start**, each yielding at most
+   `macroPrimitiveCap` = 40 primitives; the whole queue is truncated to 12.
+7. `say` (≤ 140 runes) and `notes` (≤ 300 runes) are sanitised **on rune
+   boundaries** and written as the turn's `directive` replay record.
+8. `turnSpacingMs` = 2.6 s is a floor on the wall clock between request starts.
 
 ## Tick resolution order
 
@@ -122,14 +104,13 @@ remembered obstacle position goes stale, and the seat is told how stale
 ```
 solved[i]     = 1 if taskOutcome[i] == "solved" else 0
 progress[i]   = subgoal credits earned on task i          (0…3; 3 if solved)
-speed[i]      = (6 - taskTurns[i]) if solved[i] else 0    (0…5)
+speed[i]      = (11 - taskTurns[i]) if solved[i] else 0   (0…10)
 
-scores[s] = 100_000 × Σ solved + 1_000 × Σ progress + 10 × Σ speed
+scores[0] = 100_000 × Σ solved + 1_000 × Σ progress + 10 × Σ speed
 ```
 
-Every term is computed PER LANE. `results.win[s]` is
-`tasksSolved[s] >= parTasks`; `results.winner` is the seat with the STRICTLY
-highest `scores`, and on an exact tie it is `null` with `results.tied` true. `deaths`, `crashes`, `taskCellsSeen`,
+`results.win[0]` is `tasksSolved >= parTasks`; `results.winner` is `0` when
+`win[0]` and `null` otherwise. `deaths`, `crashes`, `taskCellsSeen`,
 `doorsOpened`, `objectsPickedUp`, `productionsFired`, `primitivesExecuted`,
 `actionsDropped`, `macrosUnreachable` and `repliesRepaired` are **measured and
 never scored**.
@@ -138,22 +119,17 @@ never scored**.
 
 `results.reason` is a closed enum of exactly three values:
 
-- **`complete`** — every lane finished the gauntlet
-  (`endRule: allLanesComplete`) or the turn cap fired (`turnCap`).
+- **`complete`** — the gauntlet ran out of tasks (`endRule: gauntletComplete`)
+  or the turn cap fired (`turnCap`).
 - **`deadline`** — the engine's `wallClockBudgetSeconds` (660 s) stop
-  (`endRule: wallClock`). Settles with the **real** phases solved so far in
-  every lane and marks every unstarted phase `unreached`.
+  (`endRule: wallClock`). Settles with the **real** tasks solved so far and
+  marks every unstarted task `unreached`.
 - **`fault`** — an unexpected exception (`endRule: fault`). Artifacts are still
   written and the process exits 0.
 
-`results.endRule` is the closed enum
-`allLanesComplete | turnCap | wallClock | fault`, and `results.laneEndRule[s]`
-— what ended THAT lane — is `gauntletComplete | turnCap | wallClock`.
-
 **A silent seat does not end the episode.** A seat that never connects,
-disconnects mid-episode, or fails every decision has ITS LANE driven by `scout`
-to that lane's natural end, with `deadSeats[s] = true`. The other three lanes
-are untouched — that is what isolation buys.
+disconnects mid-episode, or fails every decision is driven by `scout` and the
+gauntlet runs to its natural end with `deadSeats[0] = true`.
 
 ## The scripted baselines
 
@@ -162,7 +138,6 @@ are untouched — that is what isolation buys.
   adjacent to the most `?` cells and cross into the unknown, else spin. It never
   plans a path through lava and never `forward`s into a known obstacle. It is
   also the server-side fallback.
-- **`bumper`** — the reactive control: twenty-four actions a turn, each
-  `forward` if
+- **`bumper`** — the reactive control: twelve actions a turn, each `forward` if
   the cell ahead is traversable in the known map, else `right`. No memory, no
   BFS, no mission parsing.

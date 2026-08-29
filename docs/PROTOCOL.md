@@ -73,28 +73,18 @@ python3 tools/replay_summary.py episode.replay | jq -r '.protocol, .results.reas
 
 A closed schema; `game.results_schema` in the manifest lists exactly these keys.
 `reason ∈ {complete, deadline, fault}`,
-`endRule ∈ {allLanesComplete, turnCap, wallClock, fault}`,
-`laneEndRule[s] ∈ {gauntletComplete, turnCap, wallClock}`,
-`taskOutcome[s][i] ∈ {solved, timeout, died, crashed, unreached}`.
+`endRule ∈ {gauntletComplete, turnCap, wallClock, fault}`,
+`taskOutcome[i] ∈ {solved, timeout, died, crashed, unreached}`.
 
-Every per-seat scalar is a **4-element array** and every per-phase array is a
-**4 × 5 array of arrays**; `taskFamilies` and `taskMissions` stay flat
-5-element arrays, because all four lanes run the same seeded ladder.
-
-Five identities hold in every results document:
-`Σ phaseTurns == turnsPlayed`; `taskTurns[s][i] ≤ phaseTurns[i] ≤ taskTurnCap`;
-`laneTicks[s] == Σ taskTicks[s][i] ≤ finalTick ≤ turnsPlayed × turnTicks`;
-`taskSolved[s][i] == (taskOutcome[s][i] == "solved")` and it implies
-`taskProgress[s][i] == 3`; and
-`scores[s] == 100_000×tasksSolved[s] + 1_000×progressTotal[s] + 10×speedTotal[s]`.
-`Σ fallbackCauses[s].values() == fallbackTurns[s]`, and every cause is one of
-`transport_timeout | transport_error | http_error | parse_error | schema_error |
-no_credentials | rate_guard | budget_guard | disconnected` — the cause is set at
-the point of failure and copied, never re-derived.
+Four identities hold in every results document:
+`Σ taskTurns == turnsPlayed`; `Σ taskTicks == finalTick`;
+`taskSolved[i] == (taskOutcome[i] == "solved")` and `taskSolved[i]` implies
+`taskProgress[i] == 3`; and
+`scores[0] == 100_000×tasksSolved + 1_000×progressTotal + 10×speedTotal`.
 
 ## Two name spaces
 
-In-game a seat is **`Alpha`**, **`Beta`**, **`Gamma`** or **`Delta`** — the only
-names that appear in an observation, in a prompt, in a `say`, or on the board.
-A seat's **real policy name** lives only in `results.names`, in the replay's
-join record, and spectator-side in the viewer. `showPlayerLabels` is false.
+In-game the seat is **`Alpha`** — the only name that appears in an observation,
+in a prompt, in a `say`, or on the board. The seat's **real policy name** lives
+only in `results.names`, in the replay's join record, and spectator-side in the
+viewer. `showPlayerLabels` is false.
