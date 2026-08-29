@@ -4912,8 +4912,12 @@ button.beat-marker {
         parts.push(mgAlias(slot).charAt(0) + mgAlias(slot).slice(1).toLowerCase() +
           ' ' + lane.solved);
       });
-      cap.textContent = 'tick ' + s.t + '/' + mg.maxTicks + ' · ' +
-        parts.join(' · ');
+      // The PLAY tick, not the raw packet tick: the axis starts at the first
+      // post-lobby frame, so `s.t - s.st` is what the scrubber measures and
+      // what `tick n/maxTicks` must read (a raw s.t showed 735/720 at the end
+      // of a 720-tick episode).
+      cap.textContent = 'tick ' + Math.max(0, s.t - (s.st || 0)) + '/' +
+        mg.maxTicks + ' · ' + parts.join(' · ');
     }
   }
 
