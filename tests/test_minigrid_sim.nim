@@ -306,14 +306,48 @@ suite "minigrid sim":
     check manhattan(face.x, face.y, 7, 7) == 1
     let toward = dirToward(face.x, face.y, 7, 7)
     check toward.ok and face.dir == toward.dir
-    ## An unreachable target yields ZERO primitives.
+    ## CASE C (addendum v2.1): a target that is neither traversable-and-reached
+    ## nor 4-adjacent to a reached cell no longer yields nothing — the macro
+    ## walks as close as the KNOWN map allows and turns toward it, reporting
+    ## `partial`. It yields ZERO only when no reached cell is strictly closer
+    ## to the target than the agent's own.
     var sealed = map
     for dir in Dirs:
       sealed.cells[idx(11 + DirDx[dir], 11 + DirDy[dir])].cell =
         Cell(kind: ckWall)
     let blocked = gotoPrimitives(sealed, 1, 1, dirEast, 11, 11, 40)
-    check not blocked.ok
-    check blocked.primitives.len == 0
+    check blocked.ok
+    check blocked.partial
+    check blocked.primitives.len > 0
+    ## it really got closer, and it never left the seen, traversable region
+    check manhattan(blocked.x, blocked.y, 11, 11) <
+      manhattan(1, 1, 11, 11)
+    check sealed.traversable(blocked.x, blocked.y)
+
+    ## A goto at an UNSEEN cell across an open room walks toward it and sets
+    ## `partial` — the champions' "sweep to the far corner" move, which v2
+    ## answered with zero primitives (addendum v2.1 §3).
+    var half: KnownMap
+    for y in 0 ..< GridSize:
+      for x in 0 ..< 7:
+        half.cells[idx(x, y)].seen = true
+        half.cells[idx(x, y)].cell =
+          if x == 0 or y == 0 or y == GridSize - 1: Cell(kind: ckWall)
+          else: Cell(kind: ckEmpty)
+    let sweep = gotoPrimitives(half, 2, 6, dirEast, 11, 6, 40)
+    check sweep.ok
+    check sweep.partial
+    check (sweep.x, sweep.y) == (6, 6)      ## the reached cell nearest (11,6)
+    check sweep.dir == dirEast              ## facing the greatest offset axis
+    check sweep.primitives.len > 0
+    ## and when the agent is ALREADY the closest reached cell, nothing moves.
+    let stuck = gotoPrimitives(half, 6, 6, dirEast, 11, 6, 40)
+    check not stuck.ok
+    check not stuck.partial
+    check stuck.primitives.len == 0
+    ## Case A and case B are untouched.
+    check gotoPrimitives(map, 1, 1, dirEast, 10, 10, 40).partial == false
+    check gotoPrimitives(map, 1, 1, dirEast, 7, 7, 40).partial == false
     ## A 180 degree face is ALWAYS right, right.
     check turnsBetween(dirEast, dirWest) == @[pRight, pRight]
     check turnsBetween(dirNorth, dirSouth) == @[pRight, pRight]

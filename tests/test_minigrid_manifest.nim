@@ -33,15 +33,19 @@ suite "minigrid manifest":
         config["taskCount"].getInt() * config["taskTurnCap"].getInt()
       check config["maxTicks"].getInt() ==
         config["maxTurns"].getInt() * config["turnTicks"].getInt()
-      ## THE WALL-CLOCK ARITHMETIC of §Cadence v2: the absolute worst case —
-      ## every turn burning the whole turn budget — plus 121 s of lobby,
-      ## artifacts and sim still fits inside the engine's own stop.
-      check config["maxTurns"].getInt() * config["turnBudgetMs"].getInt() div
-        1000 + 121 <= config["wallClockBudgetSeconds"].getInt()
+      ## THE GUARD BOUND of §Cadence v2.1, replacing v2's arithmetic bound:
+      ## no ladder can both cover the concurrent-batch p90 and multiply out
+      ## under the 660 s stop at 30 turns, so the worst case is bounded by the
+      ## BUDGET GUARD instead — 578 + 30 + 21 = 629 <= 660.
+      let latestStart = config["wallClockBudgetSeconds"].getInt() -
+        2 * (config["turnSpacingMs"].getInt() +
+             config["turnBudgetMs"].getInt()) div 1000
+      check latestStart + config["turnBudgetMs"].getInt() div 1000 + 21 <=
+        config["wallClockBudgetSeconds"].getInt()
       ## The steady state cannot trip the 28-request rolling guard.
       check 4 * 60000 div max(1, config["turnSpacingMs"].getInt()) <= 24
-      check config["attempt1Ms"].getInt() >= 11000
-      check config["retryMs"].getInt() >= 6000
+      check config["attempt1Ms"].getInt() >= 18000
+      check config["retryMs"].getInt() >= 12000
       check config["turnTicks"].getInt() == 24
       check config["taskTurnCap"].getInt() == 6
       check config["maxTurns"].getInt() == 30

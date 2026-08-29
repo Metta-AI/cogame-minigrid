@@ -1,6 +1,6 @@
 ## Replay — design note §Tests items 28..32.
 
-import std/[json, os, osproc, strutils, unicode, unittest]
+import std/[json, os, osproc, sequtils, strutils, unicode, unittest]
 import minigrid/[sim, replays, replay_runtime, decide, directives, driver,
                  baselines]
 import helpers
@@ -186,6 +186,48 @@ suite "minigrid replay":
     check parsed["plansBySeat"]["0"].len == 1
     check parsed["fallbacks"].getInt() == 1
     check parsed["results"]["reason"].getStr() == "complete"
+
+  test "30b. the tool's top-level arrays are indexed by SLOT, not by arrival":
+    ## `tools/replay_summary.py` is the declared phase-60 evidence path, and a
+    ## WRONG array there is worse than a missing one: round 16 of the 0.1.1
+    ## league landed the `register` records out of order and the tool reported
+    ## `policyKinds ["llm","llm","scripted","llm"]` for a seat-ordered
+    ## `["llm","llm","llm","scripted"]` (addendum v2.1 §3c).
+    let path = getTempDir() / "minigrid-registerorder.replay"
+    removeFile(path)
+    var config = testConfig()
+    var sim = initSimServer(config)
+    var writer = openReplayWriter(path, config.resolvedJson())
+    ## The registers arrive in REVERSE slot order, which is legal: joins are
+    ## slot-sequential but registrations race.
+    const Kinds = ["llm", "llm", "llm", "scripted"]
+    const Names = ["minigrid-cartographer", "minigrid-missionfirst",
+                   "richards-entrant", "minigrid-bumper"]
+    for slot in countdown(LaneCount - 1, 0):
+      writer.writeJoin(tickTime(0), slot, Names[slot], slot, "token-" & $slot)
+      discard sim.addPlayer(Names[slot], slot, "token-" & $slot,
+                            trusted = true)
+      let record = registerRecord(slot, seatAlias(slot), Names[slot],
+        Kinds[slot], (if Kinds[slot] == "llm": "" else: "bumper"))
+      writer.writeChat(tickTime(1), 0, record)
+      sim.applyControlRecord(record)
+    sim.phase = Playing
+    sim.startPhase(0)
+    sim.finish(erComplete, edAllLanesComplete)
+    writer.writeChat(tickTime(2), 0, resultRecord(sim))
+    writer.writeHash(1'u32, 0'u64)
+    writer.closeReplayWriter()
+
+    let summary = parseJson(execProcess("python3 " & repoRoot() &
+      "/tools/replay_summary.py " & path))
+    ## Element for element with the seat-ordered results document.
+    for key in ["policyKinds", "names", "aliases"]:
+      check summary[key].len == LaneCount
+      for slot in 0 ..< LaneCount:
+        check summary[key][slot] == summary["results"][key][slot]
+    check summary["policyKinds"].elems.mapIt(it.getStr()) == @Kinds
+    check summary["aliases"].elems.mapIt(it.getStr()) ==
+      @["Alpha", "Beta", "Gamma", "Delta"]
 
   test "31. determinism from the replay alone":
     let path = getTempDir() / "minigrid-determinism.replay"

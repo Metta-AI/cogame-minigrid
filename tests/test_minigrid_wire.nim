@@ -75,6 +75,19 @@ proc emittedPacket(sim: var SimServer, chrome: string): seq[uint8] =
 
 suite "minigrid sprite wire":
 
+  test "55f. the evidence tool reports SEAT-ORDERED arrays":
+    ## `tools/replay_summary.py` is the declared phase-60 evidence path.
+    ## Its top-level `policyKinds`, `names` and `aliases` are built by
+    ## `register.slot`, sized to num_agents — never by the arrival order of the
+    ## register records (addendum v2.1 §3c). The element-for-element check
+    ## against `results.*` lives in tests/test_minigrid_replay.nim test 30b,
+    ## which records a replay whose registers arrive in REVERSE slot order;
+    ## this is the source pin that keeps the fix from being reverted.
+    let tool = readRepo("tools/replay_summary.py")
+    check "def by_slot(field, default=\"\")" in tool
+    check "[r.get(\"kind\", \"\") for r in registers]" notin tool
+    check "results.get(\"policyKinds\") or by_slot(\"kind\")" in tool
+
   test "55. the fork emits EXACTLY the starter's six message types":
     check SpriteMessageTypes == [1, 2, 3, 4, 5, 6]
     ## The set `broadcast_core.js` handles.

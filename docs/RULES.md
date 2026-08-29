@@ -39,9 +39,14 @@ any layout parameter.
    merge it into that lane's known map.
 3. Issue **ONE batch** carrying one request per **active** seat — an active seat
    is one whose lane has not resolved the phase (attempt-1 deadline
-   `attempt1Ms` = 11 s). Seats are never queried sequentially.
+   `attempt1Ms` = 18 s). Seats are never queried sequentially.
 4. Every seat that timed out, errored, returned non-JSON or returned no usable
-   `actions` is retried **once**, again as a single batch (`retryMs` = 6 s).
+   `actions` is retried **once**, again as a single batch (`retryMs` = 12 s).
+   The ladder is sized off the CONCURRENT-BATCH p90 — a batch of three measured
+   p90 8.6–10.1 s against a single call's 6.0 s — never off a right-censored
+   maximum. The worst case is bounded by the **budget guard**, not by
+   arithmetic: it lets no turn start after 578 s, so 578 + 30 + 21 = 629 s sits
+   inside the 660 s stop.
 5. Still nothing → the **`scout`** scripted plan is computed server-side **for
    that lane** and a `fallback` record is written with the TRUE cause.
 6. Validate and expand each seat's plan against **its own lane's** known map, in

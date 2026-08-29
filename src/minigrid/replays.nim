@@ -159,15 +159,31 @@ proc applyControlRecord*(sim: var SimServer, message: string) =
     if slot >= 0 and slot < sim.lanes.len:
       sim.lanes[slot].notes = ""
       sim.installLanePlan(slot, primitives, record{"truncated"}.getBool(),
-        record{"dropped"}.getInt(), record{"unreachable"}.getInt())
+        record{"dropped"}.getInt(), record{"unreachable"}.getInt(),
+        record{"partial"}.getInt())
       case record{"source"}.getStr()
-      of "llm": inc sim.lanes[slot].llmTurns
+      of "llm":
+        inc sim.lanes[slot].llmTurns
+        if record{"retried"}.getBool():
+          inc sim.lanes[slot].retriedTurns
       of "fallback":
         inc sim.lanes[slot].fallbackTurns
-        for cause in FallbackCause:
-          if $cause == record{"cause"}.getStr():
-            inc sim.lanes[slot].fallbackCauses[cause]
-            break
+        ## EVERY failed attempt of the turn, each under its own cause; the
+        ## single `cause` is the pre-v2.1 shape and stays readable.
+        var counted = 0
+        let causes = record{"causes"}
+        if not causes.isNil and causes.kind == JArray:
+          for item in causes:
+            for cause in FallbackCause:
+              if $cause == item.getStr():
+                inc sim.lanes[slot].fallbackCauses[cause]
+                inc counted
+                break
+        if counted == 0:
+          for cause in FallbackCause:
+            if $cause == record{"cause"}.getStr():
+              inc sim.lanes[slot].fallbackCauses[cause]
+              break
       else: discard
     let say = record{"say"}.getStr()
     if say.len > 0:

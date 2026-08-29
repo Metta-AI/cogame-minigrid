@@ -48,14 +48,23 @@ never by byte index.
   `#`, `d`, `L`, `k`, `o`, `b` and any cell known to hold an obstacle are not.
 - Ties break on the neighbour order above, so the path is **unique** for a given
   known map.
-- If the target is traversable the path ends **on** it; if it is 4-adjacent to a
-  reached cell the path ends on the nearest such cell and a final `face` toward
-  the target is appended; otherwise the macro yields **zero** primitives and
-  counts as `unreachable`.
+- **A.** If the target is traversable and reached, the path ends **on** it.
+- **B.** If it is 4-adjacent to a reached cell, the path ends on the nearest
+  such cell and a final `face` toward the target is appended.
+- **C.** Otherwise the macro is **BEST-EFFORT**: it walks to the reached cell
+  that minimises, in order, (i) Manhattan distance to the target, (ii) BFS
+  distance from you, (iii) cell index, then turns you toward the axis of the
+  greatest remaining offset (ties → the x axis). It reports `partial`. Only
+  when that cell is the one you already stand on does the macro yield **zero**
+  primitives and count as `unreachable`.
 - Bounded by 40 primitives; the whole turn's queue is then truncated to 24.
 
-`goto` refuses to path through `?` cells and through lava. That is why walking
-into the unknown costs an explicit `forward` from you.
+`goto` never walks through `?` cells or through lava — in every case, case C
+included. So aiming a `goto` at an unseen cell is a legitimate way to explore:
+it walks you as far toward it as the map allows and turns you to face it.
+`last_plan.partial` counts those, `last_plan.unreachable` counts the ones that
+could not move you at all, and `results.macrosPartial[i]` /
+`results.macrosUnreachable[i]` report the episode totals.
 
 ## What you get each turn
 
@@ -78,7 +87,8 @@ into the unknown costs an explicit `forward` from you.
                "state": "locked", "seen_tick": 152}],
   "productions": [],
   "last_plan": {"executed": ["right", "forward", "…"],
-                "truncated": true, "dropped": 0, "unreachable": 0},
+                "truncated": true, "dropped": 0, "unreachable": 0,
+                "partial": 1},
   "subgoals": [{"name": "has_key", "earned": true},
                {"name": "door_open", "earned": false},
                {"name": "on_goal", "earned": false}],

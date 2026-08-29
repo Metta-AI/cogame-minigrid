@@ -152,9 +152,31 @@ def summarise(path: str) -> dict:
     # The REAL policy names live in the results document and in the join
     # records; the in-game aliases are the roster's own, and the two name
     # spaces never mix.
+    #
+    # EVERY top-level per-seat array is indexed by `register.slot` and sized to
+    # num_agents — NEVER by the arrival order of the register records. Round 16
+    # of the 0.1.1 league landed them out of order and this file, the declared
+    # phase-60 evidence path, reported policyKinds ["llm","llm","scripted","llm"]
+    # for a seat-ordered ["llm","llm","llm","scripted"]. A wrong array in the
+    # evidence path is worse than a missing one.
+    seats = config.get("num_agents") or len(config.get("players") or []) or 1
+    seats = max(seats, 1 + max((r.get("slot", 0) for r in registers), default=0))
+
+    def by_slot(field, default=""):
+        out = [default] * seats
+        for record in registers:
+            slot = record.get("slot")
+            if isinstance(slot, int) and 0 <= slot < seats:
+                out[slot] = record.get(field, default)
+        return out
+
     names = results.get("names") or [
         p.get("name", "") for p in (config.get("players") or [])]
-    aliases = results.get("aliases") or ["Alpha", "Beta", "Gamma", "Delta"]
+    aliases = results.get("aliases") or by_slot("alias")
+    if not any(aliases):
+        aliases = ["Alpha", "Beta", "Gamma", "Delta"][:seats]
+    if not names:
+        names = by_slot("policy")
     lanes = results.get("lanes") or list(range(len(aliases)))
     # Per-seat views of the two per-turn streams: this game is four ISOLATED
     # lanes, so a summary that pooled them would hide which cog said what.
@@ -176,7 +198,7 @@ def summarise(path: str) -> dict:
         "names": names,
         "aliases": aliases,
         "lanes": lanes,
-        "policyKinds": [r.get("kind", "") for r in registers],
+        "policyKinds": results.get("policyKinds") or by_slot("kind"),
         "tickCount": results.get("finalTick", 0),
         "plans": plans,
         "plansBySeat": plans_by_seat,

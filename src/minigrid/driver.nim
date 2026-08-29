@@ -32,6 +32,9 @@ type
     primitives*: seq[Primitive]
     truncated*: bool
     unreachable*: int
+    partial*: int
+      ## macros that walked as close as the KNOWN map allows and turned toward
+      ## the target instead of yielding nothing (addendum v2.1 Case C).
 
 const PrimitiveOf*: array[akLeft .. akWait, Primitive] =
   [pLeft, pRight, pForward, pPickup, pDrop, pToggle, pWait]
@@ -47,13 +50,24 @@ proc parseActionKind*(text: string): tuple[ok: bool, kind: ActionKind] =
 
 proc gotoPrimitives*(map: KnownMap, ax, ay: int, dir: Dir, tx, ty: int,
                      cap: int): tuple[ok: bool, primitives: seq[Primitive],
-                                      x, y: int, dir: Dir] =
-  ## The `goto` BFS, run against the known map as of TURN START.
+                                      x, y: int, dir: Dir, partial: bool] =
+  ## The `goto` BFS, run against the known map as of TURN START. THREE cases:
   ##
-  ## If the target is traversable, the path ends ON it. If it is not
-  ## traversable but is 4-adjacent to some reached cell, the path ends on the
-  ## nearest such cell and a final `face` toward the target is appended. If
-  ## neither, the macro yields ZERO primitives and counts as `unreachable`.
+  ## A. the target is traversable and reached — the path ends ON it.
+  ## B. the target is not traversable but is 4-adjacent to some reached cell —
+  ##    the path ends on the nearest such cell and a final turn toward the
+  ##    target is appended.
+  ## C. neither — the macro walks BEST-EFFORT to the reached cell that
+  ##    minimises, in order, (i) Manhattan distance to the target, (ii) BFS
+  ##    distance from the agent, (iii) cell index, then turns toward the axis
+  ##    of greatest remaining offset (ties -> the x axis). It reports
+  ##    `partial`. ONLY when that cell is the agent's own does the macro yield
+  ##    zero primitives and count as `unreachable`.
+  ##
+  ## The walk is confined to SEEN, TRAVERSABLE cells in every case, so partial
+  ## observability, lava safety and "never path through ?" are untouched — and
+  ## the target's coordinates came from the policy, not from the game, so
+  ## nothing about an unseen cell is leaked back.
   result.x = ax
   result.y = ay
   result.dir = dir
@@ -64,7 +78,7 @@ proc gotoPrimitives*(map: KnownMap, ax, ay: int, dir: Dir, tx, ty: int,
     goalX = tx
     goalY = ty
     faceTarget = false
-  if not map.traversable(tx, ty):
+  if not map.traversable(tx, ty) or not search.reached[idx(tx, ty)]:
     var
       best = -1
       bestSlot = -1
@@ -80,12 +94,33 @@ proc gotoPrimitives*(map: KnownMap, ax, ay: int, dir: Dir, tx, ty: int,
         best = distance
         bestSlot = idx(nx, ny)
     if bestSlot < 0:
-      return
+      ## CASE C. Get as close as the known map allows.
+      var
+        bestManhattan = manhattan(ax, ay, tx, ty)
+        bestDistance = 0
+      bestSlot = idx(ax, ay)
+      for slot in 0 ..< GridCells:
+        if not search.reached[slot]:
+          continue
+        let
+          cx = slot mod GridSize
+          cy = slot div GridSize
+          toTarget = manhattan(cx, cy, tx, ty)
+          fromAgent = search.dist[slot]
+        if toTarget < bestManhattan or
+            (toTarget == bestManhattan and fromAgent < bestDistance) or
+            (toTarget == bestManhattan and fromAgent == bestDistance and
+             slot < bestSlot):
+          bestManhattan = toTarget
+          bestDistance = fromAgent
+          bestSlot = slot
+      if bestSlot == idx(ax, ay):
+        ## Already as close as the map allows: nothing to walk.
+        return
+      result.partial = true
     goalX = bestSlot mod GridSize
     goalY = bestSlot div GridSize
     faceTarget = true
-  elif not search.reached[idx(tx, ty)]:
-    return
 
   var
     cx = ax
@@ -108,7 +143,20 @@ proc gotoPrimitives*(map: KnownMap, ax, ay: int, dir: Dir, tx, ty: int,
     if primitives.len > cap:
       break
   if faceTarget:
-    let toward = dirToward(cx, cy, tx, ty)
+    ## Face the target when it is 4-adjacent (case B), else the AXIS of the
+    ## greatest remaining offset, x before y on a tie (case C).
+    var toward = dirToward(cx, cy, tx, ty)
+    if not toward.ok:
+      let
+        dx = tx - cx
+        dy = ty - cy
+      if dx != 0 or dy != 0:
+        toward.ok = true
+        toward.dir =
+          if abs(dx) >= abs(dy):
+            (if dx > 0: dirEast else: dirWest)
+          else:
+            (if dy > 0: dirSouth else: dirNorth)
     if toward.ok:
       for turn in turnsBetween(cdir, toward.dir):
         primitives.add(turn)
@@ -139,6 +187,8 @@ proc expandPlan*(map: KnownMap, ax, ay: int, dir: Dir, actions: seq[Action],
       if not walk.ok:
         inc result.unreachable
         continue
+      if walk.partial:
+        inc result.partial
       for primitive in walk.primitives:
         result.primitives.add(primitive)
       cx = walk.x

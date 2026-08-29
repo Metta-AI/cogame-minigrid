@@ -19,7 +19,13 @@ import std/[strutils, unicode]
 const
   GameName* = "minigrid"
 
-  GameVersion* = "2"
+  GameVersion* = "3"
+    ## GV3 (addendum v2.1, 2026-08-29): `goto` IS BEST-EFFORT. A target that is
+    ## neither traversable-and-reached nor 4-adjacent to a reached cell no
+    ## longer yields zero primitives: the macro walks to the reached cell
+    ## closest to the target and turns toward it, reporting `partial`.
+    ## `unreachable` now means only "no reached cell is closer than my own".
+    ## Sim semantics, so a GV2 replay is not playable by this build.
     ## GV2 (addendum v2, 2026-08-28): FOUR ISOLATED LANES OF THE SAME SEEDED
     ## GAUNTLET. Four seats each play a private instance of the identical
     ## five-phase ladder, phase boundaries synchronised; the timing ladder is

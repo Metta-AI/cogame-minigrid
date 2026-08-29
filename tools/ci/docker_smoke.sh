@@ -296,12 +296,19 @@ except Exception as exc:
 if not isinstance(results, dict) or not results:
     raise SystemExit(f"results.json is not a non-empty object: {results!r}")
 
-for key in ("names", "scores"):
+# THE EXPECTED-KEY SET. Adding a results key means updating
+# `gauntletResultsJson`, the manifest's `results_schema` and this list in the
+# SAME commit (design note §Results): Coworld schemas are closed, so a key that
+# reaches only two of the three is silently dropped on upload.
+for key in ("names", "scores", "lanes", "aliases", "win", "laneEndRule",
+            "tasksSolved", "progressTotal", "speedTotal", "laneTicks",
+            "macrosUnreachable", "macrosPartial", "fallbackTurns",
+            "retriedTurns", "fallbackCauses", "policyKinds", "deadSeats"):
     if key in results:
         if len(results[key]) != seats:
             raise SystemExit(f"results.{key} has {len(results[key])} entries, expected {seats}")
     else:
-        print(f"WARNING: results.json has no '{key}' key")
+        raise SystemExit(f"results.json has no '{key}' key (expected one entry per seat)")
 
 reason = results.get("reason") or results.get("end_reason")
 if reason is not None:

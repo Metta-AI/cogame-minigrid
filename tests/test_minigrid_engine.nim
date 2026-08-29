@@ -98,11 +98,19 @@ suite "minigrid engine":
         100_000 * results["tasksSolved"][slot].getInt() +
         1_000 * results["progressTotal"][slot].getInt() +
         10 * results["speedTotal"][slot].getInt()
-      ## The truthful cause counts sum to the fallback turns.
+      ## The truthful cause counts: EVERY failed attempt of a turn that fell
+      ## back, so between one and two per fallback turn (addendum v2.1 §2).
       var causes = 0
       for _, count in results["fallbackCauses"][slot].pairs:
         causes += count.getInt()
-      check causes == results["fallbackTurns"][slot].getInt()
+      check results["fallbackTurns"][slot].getInt() <= causes
+      check causes <= 2 * results["fallbackTurns"][slot].getInt()
+      ## A retried turn is an LLM turn, never a fallback one.
+      check results["retriedTurns"][slot].getInt() >= 0
+      check results["retriedTurns"][slot].getInt() <=
+        results["llmTurns"][slot].getInt()
+      ## Case C reports itself: partial walks are counted, never silent.
+      check results["macrosPartial"][slot].getInt() >= 0
     ## The results key set equals the manifest's results_schema key set
     ## EXACTLY — Coworld schemas are closed and undeclared keys are dropped.
     var declared: seq[string]

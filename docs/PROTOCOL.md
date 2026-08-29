@@ -87,7 +87,11 @@ Five identities hold in every results document:
 `taskSolved[s][i] == (taskOutcome[s][i] == "solved")` and it implies
 `taskProgress[s][i] == 3`; and
 `scores[s] == 100_000×tasksSolved[s] + 1_000×progressTotal[s] + 10×speedTotal[s]`.
-`Σ fallbackCauses[s].values() == fallbackTurns[s]`, and every cause is one of
+`fallbackTurns[s] ≤ Σ fallbackCauses[s].values() ≤ 2 × fallbackTurns[s]` — the
+map counts EVERY failed attempt of a turn that fell back, both attempts under
+their own causes; a turn whose attempt 1 failed and whose attempt 2 SUCCEEDED
+is counted instead by `retriedTurns[s]` and stays out of the map. Every cause is
+one of
 `transport_timeout | transport_error | http_error | parse_error | schema_error |
 no_credentials | rate_guard | budget_guard | disconnected` — the cause is set at
 the point of failure and copied, never re-derived.

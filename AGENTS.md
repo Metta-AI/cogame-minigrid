@@ -76,10 +76,20 @@ implements is [docs/plans/2026-08-28-minigrid-design.md](docs/plans/2026-08-28-m
   container to dial in, not a simulation.
 - Only a genuine SECOND failure may log **`falling back`**; attempt 1 says
   **`will retry`**. Phase 60 greps the game log for both.
+- **`results.fallbackCauses[i]` counts EVERY failed attempt of a turn that fell
+  back**, not just the last one, and a turn that recovered on its retry is
+  counted by `retriedTurns[i]` instead. The identity is
+  `fallbackTurns <= sum <= 2 * fallbackTurns`.
 - **A fallback cause is set at the POINT OF FAILURE and copied, never
   re-derived.** `transportCause` / `exceptionCause` / `usableReply` in
   `decide.nim` are the only deciders; deriving the cause from a later step is
   what logged two transport timeouts as `parse_error` (VERIFY check 5).
+- **`goto` IS BEST-EFFORT (GV3).** A target the known map cannot reach walks
+  the agent to the reached cell closest to it and turns toward it, reporting
+  `partial`; `unreachable` now means only "no reached cell is closer than my
+  own". The walk still never crosses a `?` cell or lava — that invariant is
+  what keeps partial observability honest, and `tests/test_minigrid_sim.nim`
+  test 7 pins all three cases.
 - **The chrome frame rides a sprite LABEL whose length is a U16 on the wire.** A
   frame past 65 535 bytes WRAPS and the client's parser resumes mid-label,
   reporting a nonsense message type (`Unknown sprite protocol message type: 34`,

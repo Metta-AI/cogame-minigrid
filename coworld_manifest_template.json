@@ -218,19 +218,19 @@
           "type": "integer",
           "minimum": 1000,
           "maximum": 60000,
-          "default": 11000
+          "default": 18000
         },
         "retryMs": {
           "type": "integer",
           "minimum": 1000,
           "maximum": 60000,
-          "default": 6000
+          "default": 12000
         },
         "turnBudgetMs": {
           "type": "integer",
           "minimum": 1000,
           "maximum": 120000,
-          "default": 17000
+          "default": 30000
         },
         "turnSpacingMs": {
           "type": "integer",
@@ -529,6 +529,12 @@
             "type": "integer"
           }
         },
+        "macrosPartial": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
         "repliesRepaired": {
           "type": "array",
           "items": {
@@ -554,6 +560,12 @@
           }
         },
         "fallbackTurns": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "retriedTurns": {
           "type": "array",
           "items": {
             "type": "integer"
@@ -674,9 +686,9 @@
         "maxActionsPerTurn": 24,
         "macroPrimitiveCap": 40,
         "spinTurns": 24,
-        "attempt1Ms": 11000,
-        "retryMs": 6000,
-        "turnBudgetMs": 17000,
+        "attempt1Ms": 18000,
+        "retryMs": 12000,
+        "turnBudgetMs": 30000,
         "turnSpacingMs": 11000,
         "wallClockBudgetSeconds": 660,
         "lobbyJoinTimeoutTicks": 2400,
@@ -727,9 +739,9 @@
         "maxActionsPerTurn": 24,
         "macroPrimitiveCap": 40,
         "spinTurns": 24,
-        "attempt1Ms": 11000,
-        "retryMs": 6000,
-        "turnBudgetMs": 17000,
+        "attempt1Ms": 18000,
+        "retryMs": 12000,
+        "turnBudgetMs": 30000,
         "turnSpacingMs": 11000,
         "wallClockBudgetSeconds": 660,
         "lobbyJoinTimeoutTicks": 2400,
@@ -792,10 +804,10 @@
       "maxActionsPerTurn": 24,
       "macroPrimitiveCap": 40,
       "spinTurns": 24,
-      "attempt1Ms": 2000,
-      "retryMs": 1000,
-      "turnBudgetMs": 3000,
-      "turnSpacingMs": 0,
+      "attempt1Ms": 18000,
+      "retryMs": 12000,
+      "turnBudgetMs": 30000,
+      "turnSpacingMs": 11000,
       "wallClockBudgetSeconds": 240,
       "lobbyJoinTimeoutTicks": 600,
       "fastMode": true,

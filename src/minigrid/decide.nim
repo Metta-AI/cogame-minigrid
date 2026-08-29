@@ -10,17 +10,26 @@
 ## the starter's unchanged batching path.
 ##
 ## DEGRADE, NEVER HANG. Every wait here is bounded: attempt 1 gets
-## `attempt1Ms` (11 s), the single retry gets `retryMs` (6 s), and the whole
-## turn is wrapped in a monotonic `turnBudgetMs` (17 s) deadline. A rolling
-## 60 s request counter skips the call outright when the sidecar's per-episode
-## cap is in reach. On a second failure the seat plays the `scout` scripted
-## plan for ITS OWN LANE — the SAME PROC the `scout` baseline uses, imported,
-## never duplicated — and a `fallback` record names the TRUE cause.
+## `attempt1Ms` (18 s), the single retry gets `retryMs` (12 s), and the whole
+## turn is wrapped in a monotonic `turnBudgetMs` (30 s) deadline. THE LADDER IS
+## SIZED FOR A CONCURRENT BATCH (addendum v2.1): a batch of three measured p90
+## 8.6-10.1 s against the single call's 6.0 s, and the design permits four, so
+## 18 s is 1.5x the projected four-seat p90 and 12 s is a genuine second
+## chance on the much faster retry batch. The worst case is bounded by the
+## BUDGET GUARD, not by arithmetic: the guard lets no turn start after 578 s,
+## so 578 + 30 + 20 = 628 s < the 660 s stop.
+##
+## A rolling 60 s request counter skips the call outright when the sidecar's
+## per-episode cap is in reach. On a second failure the seat plays the `scout`
+## scripted plan for ITS OWN LANE — the SAME PROC the `scout` baseline uses,
+## imported, never duplicated — and a `fallback` record names the TRUE cause.
 ##
 ## THE CAUSE IS SET AT THE POINT OF FAILURE AND COPIED, NEVER RE-DERIVED. v1
 ## derived it from the parse step — which is where the ladder lands when there
 ## is no body to parse — and logged two transport timeouts as `parse_error`
-## (VERIFY check 5).
+## (VERIFY check 5). EVERY failed attempt of a turn that fell back is counted,
+## not just the last: a turn that failed `schema_error` then
+## `transport_timeout` records both (addendum v2.1 §2).
 
 import
   std/[json, monotimes, os, strutils, times],
@@ -152,14 +161,15 @@ proc usableReply*(directive: Directive): bool =
   ## that parses but carries neither is a SCHEMA failure, not a parse failure.
   directive.actions.len > 0 or directive.say.len > 0
 
-proc scoutFallback*(sim: SimServer, slot: int,
-                    cause: FallbackCause): Directive =
+proc scoutFallback*(sim: SimServer, slot: int, cause: FallbackCause,
+                    causes: seq[FallbackCause] = @[]): Directive =
   ## THE fallback plan for ONE lane, computed server-side by the SAME proc the
   ## `scout` baseline uses. `tests/test_minigrid_driver.nim` asserts the two
   ## resolve to one proc so they cannot drift.
   result = scoutPlan(sim.lanes[clamp(slot, 0, sim.lanes.high)], sim.config)
   result.source = dsFallback
   result.cause = cause
+  result.causes = (if causes.len > 0: causes else: @[cause])
 
 proc rateGuardCapacity(engine: var DecisionEngine): int =
   ## How many more requests may be issued inside the trailing 60 s window.
@@ -204,6 +214,7 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
   let seats = sim.activeSeats()
   var open: seq[int]
   var causeOf = newSeq[FallbackCause](sim.lanes.len)
+  var causesOf = newSeq[seq[FallbackCause]](sim.lanes.len)
   var have = newSeq[bool](sim.lanes.len)
   var plans = newSeq[Directive](sim.lanes.len)
 
@@ -230,7 +241,8 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
       ## An LLM seat that CANNOT call the LLM this turn is a FALLBACK, not a
       ## scripted policy, and the cause enum names every reason it happens.
       ## Recording it is what makes the two countable.
-      plans[slot] = scoutFallback(sim, slot, causeOf[slot])
+      causesOf[slot] = @[causeOf[slot]]
+      plans[slot] = scoutFallback(sim, slot, causeOf[slot], causesOf[slot])
       have[slot] = true
       result.records.add(fallbackRecord(turnIndex, slot, 1, causeOf[slot],
         "the LLM is unavailable for this turn; playing scout"))
@@ -267,6 +279,7 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
     if remainingMs <= 0:
       for slot in open:
         causeOf[slot] = fcTransportTimeout
+        causesOf[slot].add(fcTransportTimeout)
         result.records.add(fallbackRecord(turnIndex, slot, attempt + 1,
           fcTransportTimeout,
           "per-turn budget exhausted before attempt " & $(attempt + 1)))
@@ -331,6 +344,12 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
           else:
             directive.source = dsLlm
             directive.latencyMs = latency
+            if attempt > 0 and causesOf[slot].len > 0:
+              ## Attempt 1 failed and attempt 2 SUCCEEDED: that is a RETRIED
+              ## turn, counted by `retriedTurns[i]` and deliberately kept OUT
+              ## of `fallbackCauses`, which is scoped to turns that fell back.
+              directive.retried = true
+              directive.firstCause = causesOf[slot][0]
             plans[slot] = directive
             have[slot] = true
         except CatchableError as error:
@@ -339,6 +358,7 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
           cause = exceptionCause(error.msg)
       if failed:
         causeOf[slot] = cause
+        causesOf[slot].add(cause)
         result.records.add(
           fallbackRecord(turnIndex, slot, attempt + 1, cause, detail))
         ## Attempt 1 says WILL RETRY. Only a genuine second failure may say
@@ -361,15 +381,21 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
       break
 
   for slot in open:
-    plans[slot] = scoutFallback(sim, slot, causeOf[slot])
+    plans[slot] = scoutFallback(sim, slot, causeOf[slot], causesOf[slot])
     have[slot] = true
-    ## "falling back" is the phrase phase 60 greps the GAME log for.
-    echo "minigrid llm: seat ", slot, " falling back to scout (",
-      causeOf[slot], ") on turn ", turnIndex
+    ## "falling back" is the phrase phase 60 greps the GAME log for, and the
+    ## line names BOTH causes when the two attempts failed differently —
+    ## reading the summary alone must not hide a malformed reply behind a
+    ## later timeout (addendum v2.1 §2).
+    var detail = $causeOf[slot]
+    if causesOf[slot].len > 1 and causesOf[slot][0] != causeOf[slot]:
+      detail.add("; attempt 1: " & $causesOf[slot][0])
+    echo "minigrid llm: seat ", slot, " falling back to scout (", detail,
+      ") on turn ", turnIndex
 
   for slot in seats:
     if not have[slot]:
-      plans[slot] = scoutFallback(sim, slot, causeOf[slot])
+      plans[slot] = scoutFallback(sim, slot, causeOf[slot], causesOf[slot])
     result.decisions.add(SeatDecision(slot: slot, directive: plans[slot]))
 
 proc applyDirective*(sim: var SimServer, slot: int, directive: Directive,
@@ -389,16 +415,24 @@ proc applyDirective*(sim: var SimServer, slot: int, directive: Directive,
   let turn = sim.turnsPlayed
   let task = sim.taskIndex
   sim.installLanePlan(slot, expansion.primitives, expansion.truncated,
-    directive.overCap, expansion.unreachable)
+    directive.overCap, expansion.unreachable, expansion.partial)
   case directive.source
-  of dsLlm: inc sim.lanes[slot].llmTurns
+  of dsLlm:
+    inc sim.lanes[slot].llmTurns
+    if directive.retried:
+      inc sim.lanes[slot].retriedTurns
   of dsFallback:
     inc sim.lanes[slot].fallbackTurns
-    inc sim.lanes[slot].fallbackCauses[directive.cause]
+    ## EVERY failed attempt, each under its own cause.
+    if directive.causes.len == 0:
+      inc sim.lanes[slot].fallbackCauses[directive.cause]
+    else:
+      for cause in directive.causes:
+        inc sim.lanes[slot].fallbackCauses[cause]
   else: discard
   if directive.say.len > 0:
     sim.pending.add(SimEvent(kind: evSay, tick: sim.tickCount, slot: slot,
       a: directive.say))
   boundedDirectiveRecord(directive, turn, task, slot, seatAlias(slot),
     expansion.primitives, expansion.truncated,
-    directive.overCap, expansion.unreachable, view)
+    directive.overCap, expansion.unreachable, view, expansion.partial)

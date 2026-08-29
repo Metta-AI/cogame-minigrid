@@ -128,16 +128,37 @@ Recorded here so a reviewer does not have to rediscover them.
   This fork has no `rig_art.nim`: the cog is the nano-banana render, so the four
   lane colours are four TINTS of the same four facings — 16 chips at the one
   cell size, not 32 across two sizes.
-- **The certification fixture carries its own deadline ladder**
-  (`attempt1Ms 2000 / retryMs 1000 / turnBudgetMs 3000 / turnSpacingMs 0`).
-  Certification runs offline, with no LLM credentials injected, and the
-  addendum's own test 33 requires
-  `maxTurns × turnBudgetMs / 1000 + 121 ≤ wallClockBudgetSeconds` for the
-  fixture too — which its 240 s wall clock cannot satisfy with the shipped 17 s
-  turn budget.
+- **The certification fixture carried its own deadline ladder under v2** and no
+  longer does. v2's arithmetic bound could not hold for a 240 s fixture at the
+  shipped 17 s turn budget; v2.1 replaces that bound with the budget-guard one,
+  which holds for ANY turn budget once `turnSpacingMs` is the shipped 11 s. The
+  fixture therefore carries the shipped ladder unchanged and the divergence is
+  gone.
 - **A FOURTH numeric string was re-pinned in the system prompt.** The addendum
   names three (two in `WHAT YOU SEND`, one in champion #2) and misses the
   opening paragraph's "its own eleven turns", which the six-turn cap makes
   false — and both champions read it. Coordinator rails call: it now says "its
   own six turns". Prompt text only; no rule, no `GameVersion`, no fixture
   changed.
+
+## Divergences introduced by addendum v2.1 (the concurrent-batch ladder)
+
+- **The `replay_summary.py` slot-ordering assertion is test 30b, not an
+  assertion inside test 55.** The addendum places it "in test 55", which in
+  this repo is the sprite-protocol / zero-404 test — the tool is exercised by
+  the replay suite, which already runs it. The check lives in
+  `tests/test_minigrid_replay.nim` test 30b (it records a replay whose
+  `register` records arrive in REVERSE slot order and compares the tool's
+  top-level arrays with `results.*` element for element), and
+  `tests/test_minigrid_wire.nim` test 55f pins the source so the fix cannot be
+  reverted silently.
+- **`tools/ci/docker_smoke.sh` gained a real expected-key set.** The design's
+  triple-update rule names one, but the scaffolded script only checked `names`
+  and `scores` and only warned on a missing key. It now checks every per-seat
+  array — including the new `macrosPartial` and `retriedTurns` — and FAILS on a
+  missing one, which is what makes the rule enforceable.
+- **Case C's "already closest" test builds a walled 1-cell room** rather than
+  relying on a sealed target: with best-effort walking, a sealed target is
+  reachable-adjacent-ish from most of the board, so the only way to exercise
+  the surviving `unreachable` path is an agent that is itself the closest
+  reached cell.

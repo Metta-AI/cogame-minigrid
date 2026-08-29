@@ -102,6 +102,7 @@ type
     planTruncated*: bool
     lastDropped*: int
     lastUnreachable*: int
+    lastPartial*: int
     notes*: string
 
     laneTicks*: int
@@ -113,10 +114,19 @@ type
     primitivesExecuted*: int
     actionsDropped*: int
     macrosUnreachable*: int
+    macrosPartial*: int
+      ## macros that walked as close as the known map allowed instead of
+      ## yielding nothing (addendum v2.1 Case C).
     repliesRepaired*: int
     llmTurns*: int
     fallbackTurns*: int
+    retriedTurns*: int
+      ## turns where attempt 1 failed and attempt 2 SUCCEEDED. These are NOT
+      ## in `fallbackCauses`, which is scoped to turns that fell back.
     fallbackCauses*: array[FallbackCause, int]
+      ## every FAILED ATTEMPT on a turn that fell back, each under its own
+      ## cause — both attempts, not just the last (addendum v2.1 §2). The
+      ## identity is `fallbackTurns <= sum <= 2 * fallbackTurns`.
     endRule*: LaneEndRule
 
   SimServer* = object
@@ -570,7 +580,7 @@ proc beginTurn*(sim: var SimServer) =
 
 proc installLanePlan*(sim: var SimServer, slot: int,
                       primitives: seq[Primitive], truncated: bool,
-                      dropped, unreachable: int) =
+                      dropped, unreachable: int, partial = 0) =
   ## One seat's expanded queue for this turn, already truncated to
   ## `turnTicks`. Nothing carries over to the next turn.
   if slot < 0 or slot >= sim.lanes.len:
@@ -580,8 +590,10 @@ proc installLanePlan*(sim: var SimServer, slot: int,
   sim.lanes[slot].planTruncated = truncated
   sim.lanes[slot].lastDropped = dropped
   sim.lanes[slot].lastUnreachable = unreachable
+  sim.lanes[slot].lastPartial = partial
   sim.lanes[slot].actionsDropped += dropped
   sim.lanes[slot].macrosUnreachable += unreachable
+  sim.lanes[slot].macrosPartial += partial
 
 # ---------------------------------------------------------------------------
 #  gameHash
@@ -1011,7 +1023,8 @@ proc observationJson*(sim: SimServer, slot: int, includeNotes: bool): JsonNode =
       "executed": executed,
       "truncated": lane.planTruncated,
       "dropped": lane.lastDropped,
-      "unreachable": lane.lastUnreachable
+      "unreachable": lane.lastUnreachable,
+      "partial": lane.lastPartial
     },
     "subgoals": subgoals,
     "tasks_solved": lane.tasksSolved()
@@ -1082,9 +1095,11 @@ proc gauntletResultsJson*(sim: SimServer): string =
     primitives = newJArray()
     droppedActions = newJArray()
     unreachable = newJArray()
+    partialMacros = newJArray()
     repaired = newJArray()
     llmTurns = newJArray()
     fallbackTurns = newJArray()
+    retriedTurns = newJArray()
     fallbackCauses = newJArray()
     dead = newJArray()
     kinds = newJArray()
@@ -1108,9 +1123,11 @@ proc gauntletResultsJson*(sim: SimServer): string =
     primitives.add(%lane.primitivesExecuted)
     droppedActions.add(%lane.actionsDropped)
     unreachable.add(%lane.macrosUnreachable)
+    partialMacros.add(%lane.macrosPartial)
     repaired.add(%lane.repliesRepaired)
     llmTurns.add(%lane.llmTurns)
     fallbackTurns.add(%lane.fallbackTurns)
+    retriedTurns.add(%lane.retriedTurns)
     var causes = newJObject()
     for cause in FallbackCause:
       if lane.fallbackCauses[cause] > 0:
@@ -1202,12 +1219,14 @@ proc gauntletResultsJson*(sim: SimServer): string =
     "primitivesExecuted": primitives,
     "actionsDropped": droppedActions,
     "macrosUnreachable": unreachable,
+    "macrosPartial": partialMacros,
     "repliesRepaired": repaired,
     "finalTick": finalTick,
     "turnsPlayed": sim.turnsPlayed,
     "policyKinds": kinds,
     "llmTurns": llmTurns,
     "fallbackTurns": fallbackTurns,
+    "retriedTurns": retriedTurns,
     "fallbackCauses": fallbackCauses,
     "deadSeats": dead,
     "stopDetail": sim.stopDetail

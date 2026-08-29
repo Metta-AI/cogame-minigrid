@@ -36,6 +36,15 @@ type
       ## Set at the POINT OF FAILURE when `source` is `fallback`, copied into
       ## the `directive` record and never re-derived (addendum v2 §Fallback
       ## causes). Meaningless for the other two sources.
+    causes*: seq[FallbackCause]
+      ## EVERY failed attempt of a turn that fell back, in order — both
+      ## attempts when both failed (addendum v2.1 §2). `cause` is its last
+      ## element.
+    retried*: bool
+      ## attempt 1 failed and attempt 2 SUCCEEDED. Counted by
+      ## `results.retriedTurns[i]`, never by `fallbackCauses`.
+    firstCause*: FallbackCause
+      ## the attempt-1 cause of a RETRIED turn, for the log line only.
     latencyMs*: int
     dropped*: int              ## entries that did not validate
     overCap*: int              ## entries past maxActionsPerTurn
@@ -177,7 +186,7 @@ proc primitivesJson*(primitives: seq[Primitive]): JsonNode =
 proc directiveRecord*(directive: Directive, turn, task, slot: int,
                       alias: string, executed: seq[Primitive],
                       truncated: bool, dropped, unreachable: int,
-                      view: JsonNode): JsonNode =
+                      view: JsonNode, partial = 0): JsonNode =
   ## The replay chat record for one turn. Re-applied at playback to install
   ## the SAME primitive queue and to drive the broadcast feed and
   ## `tools/replay_summary.py`.
@@ -189,12 +198,20 @@ proc directiveRecord*(directive: Directive, turn, task, slot: int,
     "alias": alias,
     "source": $directive.source,
     "cause": (if directive.source == dsFallback: $directive.cause else: ""),
+    "causes": (block:
+      var list = newJArray()
+      if directive.source == dsFallback:
+        for cause in directive.causes:
+          list.add(%($cause))
+      list),
+    "retried": directive.retried,
     "latency_ms": directive.latencyMs,
     "actions": actionsJson(directive.actions),
     "executed": primitivesJson(executed),
     "truncated": truncated,
     "dropped": dropped,
     "unreachable": unreachable,
+    "partial": partial,
     "say": directive.say,
     "view": (if view.isNil: newJNull() else: view)
   }
@@ -202,7 +219,7 @@ proc directiveRecord*(directive: Directive, turn, task, slot: int,
 proc boundedDirectiveRecord*(directive: Directive, turn, task, slot: int,
                              alias: string, executed: seq[Primitive],
                              truncated: bool, dropped, unreachable: int,
-                             view: JsonNode): string =
+                             view: JsonNode, partial = 0): string =
   ## The serialized record, guaranteed <= MaxDirectiveRunes. `say` is the only
   ## unbounded-in-practice field once the observation is dropped, so it is
   ## what shrinks, and the cut still lands on a RUNE boundary. NEVER cut the
@@ -210,18 +227,18 @@ proc boundedDirectiveRecord*(directive: Directive, turn, task, slot: int,
   ## failure the rune rule exists to prevent.
   var trimmed = directive
   result = $trimmed.directiveRecord(turn, task, slot, alias, executed,
-    truncated, dropped, unreachable, view)
+    truncated, dropped, unreachable, view, partial)
   if result.runeLen <= MaxDirectiveRunes:
     return
   result = $trimmed.directiveRecord(turn, task, slot, alias, executed,
-    truncated, dropped, unreachable, nil)
+    truncated, dropped, unreachable, nil, partial)
   var guard = 0
   while result.runeLen > MaxDirectiveRunes and guard < 12:
     inc guard
     trimmed.say = trimmed.say.truncateRunes(
       max(0, trimmed.say.runeLen - max(8, trimmed.say.runeLen div 2)))
     result = $trimmed.directiveRecord(turn, task, slot, alias, executed,
-      truncated, dropped, unreachable, nil)
+      truncated, dropped, unreachable, nil, partial)
 
 proc parseRecordedActions*(node: JsonNode): seq[Primitive] =
   ## Playback: the `executed` array of a `directive` record, back into the

@@ -227,6 +227,9 @@ WHAT YOU SEND
 One JSON object with up to 24 actions. They run one per tick, in order, and then
 you are asked again. Anything past 24 ticks of movement is CUT OFF - re-issue it
 next turn.
+NEVER send a turn whose only action is a goto you are unsure of. Follow every
+goto with two or three "forward" and one "right", so the turn still moves and
+still looks somewhere new even if the goto stops short.
   {"do":"forward"}  step into the cell ahead (walls and closed doors stop you)
   {"do":"left"} {"do":"right"}   turn 90 degrees
   {"do":"pickup"}   take the object in the cell AHEAD (you must be empty-handed)
@@ -238,9 +241,13 @@ next turn.
   {"do":"goto","x":6,"y":3}    WALK THERE. This is your main action. It finds the
                     shortest path through cells you have ALREADY SEEN and stops
                     facing the target if the target is a door or an object, or
-                    standing on it if it is floor or the goal. It refuses to path
-                    through ? cells or lava. If it says "unreachable", you have not
-                    seen a route yet - go and look.
+                    standing on it if it is floor or the goal. It never walks
+                    through ? cells or lava, so if the target is still ? it walks
+                    you AS CLOSE AS IT CAN and turns you toward it - that is a
+                    "partial" walk, and it is the right way to explore: aim at the
+                    unknown and re-issue the same goto next turn. "unreachable"
+                    means it could not move you at all; when you see it, goto a
+                    SEEN floor cell next to the ? region instead.
 
 RULES THAT KILL YOU
 Stepping on ~ ends the task immediately. Walking into a grey ball that moves ends

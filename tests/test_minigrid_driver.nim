@@ -213,11 +213,29 @@ suite "minigrid driver and baselines":
       sim.lanes[0].agent.y, sim.lanes[0].agent.dir, long, 40, 24)
     check expansion.primitives.len == 24
     check expansion.truncated
-    let unreachable = expandPlan(sim.lanes[0].knownMap, sim.lanes[0].agent.x,
+    ## A goto at a cell the known map cannot reach is now a PARTIAL walk, not
+    ## a dropped turn (addendum v2.1 Case C): the expansion reports it and the
+    ## turn still moves.
+    let partial = expandPlan(sim.lanes[0].knownMap, sim.lanes[0].agent.x,
       sim.lanes[0].agent.y, sim.lanes[0].agent.dir,
       @[Action(kind: akGoto, x: 11, y: 11)], 40, 24)
-    check unreachable.unreachable == 1
-    check unreachable.primitives.len == 0
+    check partial.partial == 1
+    check partial.unreachable == 0
+    check partial.primitives.len > 0
+    ## `unreachable` survives for the one case that really is one: the agent
+    ## is already the reached cell closest to the target.
+    var boxed: KnownMap
+    boxed.cells[idx(6, 6)].seen = true
+    boxed.cells[idx(6, 6)].cell = Cell(kind: ckEmpty)
+    for dir in Dirs:
+      let slot = idx(6 + DirDx[dir], 6 + DirDy[dir])
+      boxed.cells[slot].seen = true
+      boxed.cells[slot].cell = Cell(kind: ckWall)
+    let stuck = expandPlan(boxed, 6, 6, dirEast,
+      @[Action(kind: akGoto, x: 11, y: 11)], 40, 24)
+    check stuck.unreachable == 1
+    check stuck.partial == 0
+    check stuck.primitives.len == 0
 
   test "22. the shipped baseline tuning is the swept pick":
     let swept = parseJson(readRepo("tools/ci/baseline_tuning.json"))

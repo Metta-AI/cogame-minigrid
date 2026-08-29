@@ -121,8 +121,10 @@ suite "minigrid decisions":
       check record["cause"].getStr() == "transport_timeout"
       check record["turn"].getInt() == 7
 
-    ## Sum(fallbackCauses[i]) == fallbackTurns[i], by construction: the cause
-    ## is counted where the fallback turn is counted.
+    ## `fallbackCauses[i]` counts EVERY FAILED ATTEMPT of a turn that fell
+    ## back — both attempts, each under its own cause (addendum v2.1 §2). v2
+    ## kept only the last, so a summary reader never learned a champion had
+    ## also produced a malformed reply.
     var sim = initSimServer(testConfig())
     sim.phase = Playing
     sim.startPhase(0)
@@ -130,20 +132,68 @@ suite "minigrid decisions":
     for slot in 0 ..< sim.lanes.len:
       var directive = scoutPlan(sim.lanes[slot], sim.config)
       directive.source = dsFallback
-      directive.cause = [fcTransportTimeout, fcRateGuard, fcSchemaError,
-                         fcHttpError][slot]
+      case slot
+      of 0:
+        ## the round-17 case: schema_error then transport_timeout
+        directive.causes = @[fcSchemaError, fcTransportTimeout]
+      of 1:
+        directive.causes = @[fcRateGuard]            ## blocked before any call
+      of 2:
+        directive.causes = @[fcTransportTimeout, fcTransportTimeout]
+      else:
+        directive.causes = @[fcParseError]
+      directive.cause = directive.causes[^1]
       let record = sim.applyDirective(slot, directive, nil)
       check parseJson(record)["cause"].getStr() == $directive.cause
       check parseJson(record)["slot"].getInt() == slot
+      var recorded: seq[string]
+      for item in parseJson(record)["causes"]:
+        recorded.add(item.getStr())
+      check recorded.len == directive.causes.len
     let results = parseJson(sim.gauntletResultsJson())
     for slot in 0 ..< LaneCount:
       var total = 0
       for _, count in results["fallbackCauses"][slot].pairs:
         total += count.getInt()
-      check total == results["fallbackTurns"][slot].getInt()
-      check total == 1
+      ## THE NEW IDENTITY, replacing v2's `== fallbackTurns`.
+      let turns = results["fallbackTurns"][slot].getInt()
+      check turns <= total
+      check total <= 2 * turns
+    ## A mixed-cause turn records BOTH keys.
+    check results["fallbackCauses"][0]["schema_error"].getInt() == 1
     check results["fallbackCauses"][0]["transport_timeout"].getInt() == 1
+    check results["fallbackTurns"][0].getInt() == 1
+    ## Two failures of the SAME cause count twice under the one key.
+    check results["fallbackCauses"][2]["transport_timeout"].getInt() == 2
+    ## A turn blocked before any call has exactly one.
     check results["fallbackCauses"][1]["rate_guard"].getInt() == 1
+
+    ## A RETRIED turn — attempt 1 failed, attempt 2 SUCCEEDED — is counted by
+    ## `retriedTurns[i]` and stays OUT of `fallbackCauses`, which is scoped to
+    ## turns that fell back.
+    var retried = initSimServer(testConfig())
+    retried.phase = Playing
+    retried.startPhase(0)
+    retried.beginTurn()
+    var recovered = scoutPlan(retried.lanes[0], retried.config)
+    recovered.source = dsLlm
+    recovered.retried = true
+    recovered.firstCause = fcSchemaError
+    let retriedRecord = retried.applyDirective(0, recovered, nil)
+    check parseJson(retriedRecord)["retried"].getBool()
+    let retriedResults = parseJson(retried.gauntletResultsJson())
+    check retriedResults["retriedTurns"][0].getInt() == 1
+    check retriedResults["fallbackTurns"][0].getInt() == 0
+    check retriedResults["fallbackCauses"][0].len == 0
+    for slot in 1 ..< LaneCount:
+      check retriedResults["retriedTurns"][slot].getInt() == 0
+
+    ## The second-failure log line names BOTH causes when they differ, and
+    ## still carries the phrase phase 60 greps for.
+    let engineSource = readRepo("src/minigrid/decide.nim")
+    check "; attempt 1: " in engineSource
+    check "falling back to scout (" in engineSource
+    check "causesOf[slot][0] != causeOf[slot]" in engineSource
 
     ## Only a genuine SECOND failure may log `falling back`; attempt 1 says
     ## `will retry`.
@@ -171,32 +221,53 @@ suite "minigrid decisions":
       check config.retryMs mod 1000 == 0
       check config.attempt1Ms + config.retryMs <= config.turnBudgetMs
       check config.wallClockBudgetSeconds <= 660
-      ## The worst case — every turn burning the whole budget — plus 121 s of
-      ## lobby, artifacts and sim, still inside the engine stop.
-      check config.maxTurns * config.turnBudgetMs div 1000 + 121 <=
+      check config.attempt1Ms >= 18000
+      check config.retryMs >= 12000
+      ## THE GUARD BOUND (addendum v2.1 §1), replacing v2's arithmetic
+      ## "fits always" bound, which no ladder covering the concurrent-batch
+      ## p90 can satisfy at 30 turns. The budget guard lets no turn START
+      ## after `wallClock - 2 * (spacing + budget)`; that turn costs at most
+      ## one budget, every later turn runs `scout` in microseconds, and the
+      ## artifacts take 21 s.
+      let latestStart = config.wallClockBudgetSeconds -
+        2 * (config.turnSpacingMs + config.turnBudgetMs) div 1000
+      check latestStart + config.turnBudgetMs div 1000 + 21 <=
         config.wallClockBudgetSeconds
-    ## The SHIPPED ladder, re-derived from the production measurements.
+    ## The SHIPPED ladder, sized off the CONCURRENT-BATCH p90 — never off the
+    ## right-censored maximum (addendum v2.1 §1).
     for variant in m["variants"]:
       let config = variant["game_config"]
-      check config["attempt1Ms"].getInt() >= 11000     ## 1.64x the observed max
-      check config["retryMs"].getInt() >= 6011 - 11    ## >= the observed p90
+      ## 1.5x the projected four-seat p90 (12.1 s), 1.8x the observed
+      ## three-seat p90 (10.1 s).
+      check config["attempt1Ms"].getInt() == 18000
+      ## ~= the projected four-seat p90, so the retry is a genuine second
+      ## chance (v1's error was retry < attempt 1).
+      check config["retryMs"].getInt() == 12000
+      check config["retryMs"].getInt() >= 12100 - 100
       check config["attempt1Ms"].getInt() + config["retryMs"].getInt() ==
         config["turnBudgetMs"].getInt()
-      ## 4 requests / 11 s = 21.8 req/min steady, under the 28 rolling guard.
+      ## The rate guard is UNCHANGED and cannot be tripped: 4 requests / 11 s
+      ## = 21.8 req/min steady, and a slow turn only lowers the rate.
+      check config["turnSpacingMs"].getInt() == 11000
       check LaneCount * 60000 div config["turnSpacingMs"].getInt() <= 24
       check LaneCount * 60000 div config["turnSpacingMs"].getInt() +
         LaneCount <= RateGuardMaxRequests
-      ## 30 x 17 + 121 = 631 s, inside the 660 s engine stop.
-      check config["maxTurns"].getInt() *
-        config["turnBudgetMs"].getInt() div 1000 + 121 == 631
+      ## The guard bound, in the addendum's own arithmetic: 578 + 30 + 21.
+      let latest = config["wallClockBudgetSeconds"].getInt() -
+        2 * (config["turnSpacingMs"].getInt() +
+             config["turnBudgetMs"].getInt()) div 1000
+      check latest == 578
+      check latest + config["turnBudgetMs"].getInt() div 1000 + 21 == 629
+      check latest + config["turnBudgetMs"].getInt() div 1000 + 21 <=
+        config["wallClockBudgetSeconds"].getInt()
+      ## The per-episode call budget is untouched by the ladder.
+      check LaneCount * config["maxTurns"].getInt() * 2 == 240
     ## The defaults the server runs with when a runner sends no config.
     let fallbackConfig = defaultGameConfig()
-    check fallbackConfig.attempt1Ms == 11000
-    check fallbackConfig.retryMs == 6000
-    check fallbackConfig.turnBudgetMs == 17000
+    check fallbackConfig.attempt1Ms == 18000
+    check fallbackConfig.retryMs == 12000
+    check fallbackConfig.turnBudgetMs == 30000
     check fallbackConfig.turnSpacingMs == 11000
-    check fallbackConfig.maxTurns * fallbackConfig.turnBudgetMs div 1000 +
-      121 <= fallbackConfig.wallClockBudgetSeconds
 
   test "51b. every wait is BOUNDED and the guards never sleep on the path":
     ## The rate guard skips the call; it never sleeps. The budget guard
