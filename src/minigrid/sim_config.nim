@@ -61,31 +61,32 @@ proc defaultGameConfig*(): GameConfig =
   GameConfig(
     seed: 0,
     variant: "gauntlet",
-    numAgents: 1,
-    minPlayers: 1,
-    players: @[PlayerSlot(name: "Alpha")],
-    slots: @[0],
+    numAgents: LaneCount,
+    minPlayers: LaneCount,
+    players: @[PlayerSlot(name: "Alpha"), PlayerSlot(name: "Beta"),
+               PlayerSlot(name: "Gamma"), PlayerSlot(name: "Delta")],
+    slots: @[0, 1, 2, 3],
     tokens: @[],
     gridSize: GridSize,
     viewSize: ViewSize,
-    turnTicks: 12,
-    taskTurnCap: 11,
+    turnTicks: 24,
+    taskTurnCap: 6,
     taskCount: 5,
     taskLadder: @["lavagap", "doorkey", "multiroom", "keycorridor", "babyai"],
-    maxTurns: 55,
-    maxTicks: 660,
+    maxTurns: 30,
+    maxTicks: 720,
     parTasks: 3,
     obstacleCount: 6,
     xlandRules: 3,
     xlandObjects: 6,
     babyaiObjects: 6,
-    maxActionsPerTurn: 12,
+    maxActionsPerTurn: 24,
     macroPrimitiveCap: 40,
-    spinTurns: 12,
-    attempt1Ms: 6000,
-    retryMs: 3000,
-    turnBudgetMs: 9500,
-    turnSpacingMs: 2600,
+    spinTurns: 24,
+    attempt1Ms: 11000,
+    retryMs: 6000,
+    turnBudgetMs: 17000,
+    turnSpacingMs: 11000,
     wallClockBudgetSeconds: 660,
     lobbyJoinTimeoutTicks: 2400,
     gameOverTicks: 480,
@@ -140,10 +141,10 @@ proc validate*(config: GameConfig) =
   if config.wallClockBudgetSeconds <= 0:
     raise newException(ConfigError,
       "wallClockBudgetSeconds must be positive")
-  if config.numAgents != 1:
+  if config.numAgents != LaneCount:
     raise newException(ConfigError,
-      "minigrid is a single-seat game: num_agents must be 1, got " &
-      $config.numAgents)
+      "minigrid seats FOUR isolated lanes: num_agents must be " &
+      $LaneCount & ", got " & $config.numAgents)
   if config.gridSize != GridSize or config.viewSize != ViewSize:
     raise newException(ConfigError,
       "gridSize/viewSize are pinned at " & $GridSize & "/" & $ViewSize)
@@ -232,7 +233,8 @@ proc update*(config: var GameConfig, configJson: string) =
     config.players = @[]
     for item in players:
       if item.kind == JObject:
-        config.players.add(PlayerSlot(name: item{"name"}.getStr("Alpha")))
+        config.players.add(PlayerSlot(
+          name: item{"name"}.getStr(seatAlias(config.players.len))))
       elif item.kind == JString:
         config.players.add(PlayerSlot(name: item.getStr()))
 
@@ -251,7 +253,8 @@ proc update*(config: var GameConfig, configJson: string) =
         config.slots.add(int(item.getBiggestInt()))
 
   if config.players.len == 0:
-    config.players = @[PlayerSlot(name: "Alpha")]
+    for slot in 0 ..< max(1, config.numAgents):
+      config.players.add(PlayerSlot(name: seatAlias(slot)))
   config.validate()
 
 proc resolvedJson*(config: GameConfig): string =

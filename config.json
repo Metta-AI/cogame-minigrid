@@ -1,28 +1,47 @@
 {
   "variant": "gauntlet",
-  "num_agents": 1,
-  "minPlayers": 1,
-  "players": [{"name": "Alpha"}],
+  "num_agents": 4,
+  "minPlayers": 4,
+  "players": [
+    {
+      "name": "Alpha"
+    },
+    {
+      "name": "Beta"
+    },
+    {
+      "name": "Gamma"
+    },
+    {
+      "name": "Delta"
+    }
+  ],
   "gridSize": 13,
   "viewSize": 7,
-  "turnTicks": 12,
-  "taskTurnCap": 11,
+  "turnTicks": 24,
+  "taskTurnCap": 6,
   "taskCount": 5,
-  "taskLadder": ["lavagap", "doorkey", "multiroom", "keycorridor", "babyai"],
-  "maxTurns": 55,
-  "maxTicks": 660,
+  "taskLadder": [
+    "lavagap",
+    "doorkey",
+    "multiroom",
+    "keycorridor",
+    "babyai"
+  ],
+  "maxTurns": 30,
+  "maxTicks": 720,
   "parTasks": 3,
   "obstacleCount": 6,
   "xlandRules": 3,
   "xlandObjects": 6,
   "babyaiObjects": 6,
-  "maxActionsPerTurn": 12,
+  "maxActionsPerTurn": 24,
   "macroPrimitiveCap": 40,
-  "spinTurns": 12,
-  "attempt1Ms": 6000,
-  "retryMs": 3000,
-  "turnBudgetMs": 9500,
-  "turnSpacingMs": 2600,
+  "spinTurns": 24,
+  "attempt1Ms": 11000,
+  "retryMs": 6000,
+  "turnBudgetMs": 17000,
+  "turnSpacingMs": 11000,
   "wallClockBudgetSeconds": 660,
   "lobbyJoinTimeoutTicks": 2400,
   "gameOverTicks": 480,

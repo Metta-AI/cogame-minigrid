@@ -55,10 +55,6 @@ MARKUP_REMOVALS = [
          whole at every width — so there is nothing to zoom into and nothing
          for a minimap to locate. -->
 """),
-    # #povBadge: with one seat there is nothing to select
-    ("""    <div id="povBadge">👁 POV lens — click to clear</div>
-""", """    <!-- MINIGRID: the POV badge is REMOVED — one seat, nothing to select. -->
-"""),
     # inside the KEPT #fpv: the cog has no hit points and no gear
     ("""        <span class="fpv-hp" id="fpv-hp"></span>
         <span class="fpv-gear" id="fpv-gear"></span>
@@ -82,11 +78,6 @@ MARKUP_REMOVALS = [
 # behaviour while no removed id survives in the document — the alternative,
 # excising the wiring, is the rewrite the pin forbids.
 JS_REWRITES = [
-    ("""    var badge = $('povBadge');""",
-     """    var badge = mgDetached('div');   // MINIGRID: POV badge removed"""),
-    ("""  // pov clear (togglePov lives in the shared chrome, driven via ctx.sendPov)
-  $('povBadge').addEventListener('click', function () { send('v:-1'); });""",
-     """  // MINIGRID: the POV-clear click target is removed with its badge."""),
     ("""    var hpEl = $('fpv-hp'), hpHtml = '';""",
      """    var hpEl = mgDetached('span'), hpHtml = '';   // MINIGRID: no hit points"""),
     ("""    var gearEl = $('fpv-gear'), bits = [];""",
@@ -118,16 +109,74 @@ JS_REWRITES = [
 """,
      """  // MINIGRID: the opt-out param goes with the panel it hid.
 """),
-    # There is ONE cog and it is red: the blue/green/yellow locker-room webps
-    # are deleted with the teams they belonged to, so the loading scene must
-    # not request them (four 404s per open otherwise).
-    ("""    ['green', 'blue', 'yellow', 'red'].forEach(function (bot) {""",
-     """    ['red'].forEach(function (bot) {"""),
+    # ZERO 404s, statically. The FPV billboard loader asks for a `_front_gun`
+    # pose for every lane colour, and gun variants belong to mechanics this
+    # fork deletes — so the REQUEST SITE goes, not just the file. What ships is
+    # the four plate avatars (`soldier_<colour>_front.png`) and the four
+    # top-down board rigs; tests/test_minigrid_viewer.nim resolves every image
+    # URL the page constructs against the shipped bundle and asserts zero
+    # misses.
+    ("""  var COG_ART = {}, COG_ART_GUN = {};
+  ['red', 'blue', 'green', 'yellow'].forEach(function (team) {
+    COG_ART[team] = new Image();
+    COG_ART[team].src = COG_BASE + '/soldier_' + team + '_front.png';
+    COG_ART_GUN[team] = new Image();
+    COG_ART_GUN[team].src = COG_BASE + '/soldier_' + team + '_front_gun.png';
+  });""",
+     """  // MINIGRID: the gun pose is NEVER REQUESTED — gun variants
+  // belong to the mechanics this fork deletes, so the request site goes with
+  // them (three sprite 404s per open otherwise, VERIFY check 8). The
+  // empty-handed front master is the only pose, and all four lane colours
+  // ship.
+  var COG_ART = {}, COG_ART_GUN = {};
+  ['red', 'blue', 'green', 'yellow'].forEach(function (team) {
+    COG_ART[team] = new Image();
+    COG_ART[team].src = COG_BASE + '/soldier_' + team + '_front.png';
+  });"""),
+    # ONE DENOMINATOR. Click-to-seek delegates to the game block's scrubAxis()
+    # so the click handler, the fill, the head, the beats and the lull spans
+    # cannot disagree — v1's click at 100 % landed mid-timeline (VERIFY
+    # check 8).
+    ("""  function seekToFraction(s, frac) {
+    var st = Math.max(0, s.st || 0);
+    var mx = Math.max(st + 1, s.mx || 1);
+    send('s:' + (st + Math.round(frac * (mx - st))));
+  }""",
+     """  function seekToFraction(s, frac) {
+    // MINIGRID: ONE axis, ONE denominator — the game block's scrubAxis().
+    if (window.MinigridChrome && window.MinigridChrome.seekFraction) {
+      window.MinigridChrome.seekFraction(frac);
+      return;
+    }
+    var st = Math.max(0, s.st || 0);
+    var mx = Math.max(st + 1, s.mx || 1);
+    send('s:' + (st + Math.round(frac * (mx - st))));
+  }"""),
+    # THE FEED HOLDS 8 ROWS AT DESKTOP, 4 UNDER .tiny (addendum v2 §The
+    # feed): four lanes narrating at once fill a four-row queue in a single
+    # turn, and `say` is the whole point of the feed.
+    ("""  var MAX_FEED = 4;""",
+     """  var MAX_FEED = 4;
+  // MINIGRID: the queue is 8 rows at desktop and 4 under .tiny — four lanes
+  // speak per turn, and a four-row cap would drop three of them.
+  function feedCap() {
+    var st = $('stage');
+    return (st && st.classList.contains('tiny')) ? 4 : 8;
+  }"""),
+    ("""    while (feedEl.children.length > MAX_FEED) feedEl.removeChild(feedEl.lastChild);""",
+     """    while (feedEl.children.length > feedCap()) feedEl.removeChild(feedEl.lastChild);"""),
     # The chrome context is built inside the page's own IIFE, so a harness
     # cannot reach it. Publish it: tools/ci/renderer_fixture.html drives the
     # SHIPPED chrome through its real context rather than a stand-in.
     ("""  if (window.PaintballChrome) window.PaintballChrome.install(PB_CTX);""",
-     """  window.MG_CTX = PB_CTX;
+     """  PB_CTX.core = core;          // MINIGRID: the letterbox transform, for
+                               // the gutter layout contract
+  PB_CTX.onFrame = onFrame;    // MINIGRID: the WHOLE frame path, so
+                               // tools/ci/renderer_fixture.html drives the
+                               // shipped page exactly as production does
+                               // (scorebug + clock + transport + the block)
+                               // rather than the game block alone
+  window.MG_CTX = PB_CTX;
   if (window.PaintballChrome) window.PaintballChrome.install(PB_CTX);"""),
     ("""  core.attachMinimap($('minimap-canvas'));""",
      """  // MINIGRID: nothing to attach — broadcast_core.js tolerates never being
@@ -176,7 +225,7 @@ VOCABULARY = [
       'Mapping the dark from memory…',
       'Measuring the gap in the lava…',
       'Turning to face the unknown…',
-      'Five tasks. Eleven turns each…'"""),
+      'Five phases. Six turns each…'"""),
     ("""In the locker room""", """Waiting for the cog"""),
     ("""Replay hash mismatch — showing recorded inputs""",
      """Replay hash mismatch — showing recorded actions"""),
@@ -191,9 +240,12 @@ VOCABULARY = [
 # rules equals exactly the kinds the sim emits.
 DEAD_BEAT_KINDS = ["kill", "steal", "return", "capture",
                    "gamestart", "hillflip", "tagout", "gameover"]
+# The game block emits {solved, failed, unlock, produce, fallback} x
+# {lane0..lane3} plus bare taskstart and end — 22 rules, no more and no fewer
+# (tests/test_minigrid_viewer.nim test 38).
 # Every id/class the design note removes; a surviving mention fails the check.
 REMOVED_NAMES = ["viewpanel", "minimap", "zoombar", "zoom-in", "zoom-out",
-                 "zoom-slider", "zoom-read", "povBadge", "fpv-hp", "fpv-gear",
+                 "zoom-slider", "zoom-read", "fpv-hp", "fpv-gear",
                  "fpv-map", "noviewpanel", "mm-cap", "zbtn"]
 
 BANNER = "MINIGRID additions to the inherited coworld-ctf chrome"

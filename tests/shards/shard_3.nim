@@ -1,1 +1,1 @@
-import test_minigrid_replay, test_minigrid_manifest
+import test_minigrid_replay, test_minigrid_manifest, test_minigrid_wire

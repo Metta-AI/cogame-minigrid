@@ -32,7 +32,11 @@ RUN nim c -d:emscripten replay-viewer/minigrid_replay.nim && \
       -e 's|<!-- CHROME_COMMON -->|<script src="./chrome_common.js"></script>|' \
       -e 's|<!-- BROADCAST_CORE -->|<script src="./static_replay.js"></script>|' \
     client/replay_broadcast.html > replay-viewer/dist/index.html && \
-  cp data/soldier_red_front.png replay-viewer/dist/ && \
+  cp data/soldier_red_front.png data/soldier_blue_front.png \
+    data/soldier_green_front.png data/soldier_yellow_front.png \
+    data/soldier_red.png data/soldier_blue.png \
+    data/soldier_green.png data/soldier_yellow.png \
+    replay-viewer/dist/ && \
   mkdir -p replay-viewer/dist/art/walls replay-viewer/dist/art/lockerroom && \
   cp client/art/walls/wall_h.jpg client/art/walls/wall_v.jpg \
     replay-viewer/dist/art/walls/ && \
@@ -53,6 +57,14 @@ RUN nim c -d:emscripten replay-viewer/minigrid_replay.nim && \
   ! grep -q '<script src="./broadcast_core.js"></script>' replay-viewer/dist/index.html && \
   ! grep -q '<script src="./minigrid_replay.js"></script>' replay-viewer/dist/index.html && \
   test -f replay-viewer/dist/soldier_red_front.png && \
+  test -f replay-viewer/dist/soldier_blue_front.png && \
+  test -f replay-viewer/dist/soldier_green_front.png && \
+  test -f replay-viewer/dist/soldier_yellow_front.png && \
+  test -f replay-viewer/dist/soldier_red.png && \
+  test -f replay-viewer/dist/soldier_yellow.png && \
   test -f replay-viewer/dist/art/walls/wall_h.jpg && \
   test -f replay-viewer/dist/art/lockerroom/bg.jpg && \
-  test -f replay-viewer/dist/art/lockerroom/red_6.webp
+  test -f replay-viewer/dist/art/lockerroom/red_6.webp && \
+  test -f replay-viewer/dist/art/lockerroom/blue_6.webp && \
+  test -f replay-viewer/dist/art/lockerroom/green_6.webp && \
+  test -f replay-viewer/dist/art/lockerroom/yellow_6.webp

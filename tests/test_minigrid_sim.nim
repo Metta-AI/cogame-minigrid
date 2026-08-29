@@ -126,32 +126,39 @@ suite "minigrid sim":
     var config = testConfig()
     var sim = initSimServer(config)
     sim.phase = Playing
-    sim.startTask(0)                                  ## lavagap
-    ## Stepping onto lava ends the task `died` on that tick.
-    sim.agent = Agent(x: sim.task.gapX - 1, y: 5, dir: dirEast)
-    if sim.task.gapY != 5:
-      sim.installPlan(@[pForward], false, 0, 0)
+    sim.startPhase(0)                                 ## lavagap
+    ## Stepping onto lava ends the phase `died` on that tick, IN THAT LANE
+    ## ONLY.
+    sim.lanes[1].agent = Agent(x: sim.lanes[1].task.gapX - 1, y: 5,
+                               dir: dirEast)
+    if sim.lanes[1].task.gapY != 5:
+      sim.beginTurn()
+      sim.installLanePlan(1, @[pForward], false, 0, 0)
       sim.stepTick()
-      check sim.taskOutcome == toDied
-      check sim.deaths == 1
+      check sim.lanes[1].taskOutcome == toDied
+      check sim.lanes[1].deaths == 1
+      for slot in [0, 2, 3]:
+        check sim.lanes[slot].taskOutcome == toPending
+        check sim.lanes[slot].deaths == 0
 
-    ## A forward into an obstacle ends the task `crashed` and the agent does
+    ## A forward into an obstacle ends the phase `crashed` and the agent does
     ## NOT move.
     var dyn = testConfig("xland")
     var other = initSimServer(dyn)
     other.phase = Playing
-    other.startTask(0)                                ## dynamic
-    check other.obstacles.len > 0
-    other.task.grid.setAt(3, 3, Cell(kind: ckEmpty))
-    other.task.grid.setAt(4, 3,
+    other.startPhase(0)                               ## dynamic
+    check other.lanes[0].obstacles.len > 0
+    other.lanes[0].task.grid.setAt(3, 3, Cell(kind: ckEmpty))
+    other.lanes[0].task.grid.setAt(4, 3,
       Cell(kind: ckBall, colour: coGrey, obstacle: true))
-    other.obstacles = @[Obstacle(x: 4, y: 3)]
-    other.agent = Agent(x: 3, y: 3, dir: dirEast)
-    other.installPlan(@[pForward], false, 0, 0)
+    other.lanes[0].obstacles = @[Obstacle(x: 4, y: 3)]
+    other.lanes[0].agent = Agent(x: 3, y: 3, dir: dirEast)
+    other.beginTurn()
+    other.installLanePlan(0, @[pForward], false, 0, 0)
     other.stepTick()
-    check other.taskOutcome == toCrashed
-    check other.agent.x == 3
-    check other.crashes == 1
+    check other.lanes[0].taskOutcome == toCrashed
+    check other.lanes[0].agent.x == 3
+    check other.lanes[0].crashes == 1
 
     ## An obstacle never moves into the agent's cell, and its motion is
     ## identical for a given (seed, taskIndex, tick) under any agent
@@ -161,19 +168,19 @@ suite "minigrid sim":
       var b = initSimServer(dyn)
       a.phase = Playing
       b.phase = Playing
-      a.startTask(0)
-      b.startTask(0)
-      a.agent = Agent(x: 1, y: 1, dir: dirEast)
-      b.agent = Agent(x: 11, y: 1, dir: dirWest)
-      var ga = a.task.grid
-      var gb = b.task.grid
-      var oa = a.obstacles
-      var ob = b.obstacles
-      ga.stepObstacles(oa, a.agent, dyn.seed, 0, tick)
-      gb.stepObstacles(ob, b.agent, dyn.seed, 0, tick)
+      a.startPhase(0)
+      b.startPhase(0)
+      a.lanes[0].agent = Agent(x: 1, y: 1, dir: dirEast)
+      b.lanes[0].agent = Agent(x: 11, y: 1, dir: dirWest)
+      var ga = a.lanes[0].task.grid
+      var gb = b.lanes[0].task.grid
+      var oa = a.lanes[0].obstacles
+      var ob = b.lanes[0].obstacles
+      ga.stepObstacles(oa, a.lanes[0].agent, dyn.seed, 0, tick)
+      gb.stepObstacles(ob, b.lanes[0].agent, dyn.seed, 0, tick)
       for i in 0 ..< oa.len:
-        check (oa[i].x != a.agent.x or oa[i].y != a.agent.y)
-        check (ob[i].x != b.agent.x or ob[i].y != b.agent.y)
+        check (oa[i].x != a.lanes[0].agent.x or oa[i].y != a.lanes[0].agent.y)
+        check (ob[i].x != b.lanes[0].agent.x or ob[i].y != b.lanes[0].agent.y)
 
   test "5. visibility flood":
     ## The exact rule of §The game, against hand-built fixtures.
@@ -241,27 +248,32 @@ suite "minigrid sim":
     var config = testConfig()
     var sim = initSimServer(config)
     sim.phase = Playing
-    sim.startTask(0)
-    let seenAtStart = sim.knownMap.cellsSeen()
+    sim.startPhase(0)
+    let seenAtStart = sim.lanes[0].knownMap.cellsSeen()
     check seenAtStart > 0
-    ## A cell never in `vis` stays '?' for the whole task.
+    ## Every lane starts from the identical known map — same seed, same
+    ## layout, same first flood.
+    for slot in 1 ..< sim.lanes.len:
+      check sim.lanes[slot].knownMap.cells == sim.lanes[0].knownMap.cells
+    ## A cell never in `vis` stays '?' for the whole phase.
     var neverSeen = -1
     for slot in 0 ..< GridCells:
-      if not sim.knownMap.cells[slot].seen:
+      if not sim.lanes[0].knownMap.cells[slot].seen:
         neverSeen = slot
         break
     check neverSeen >= 0
-    check sim.knownMap.knownGlyph(neverSeen mod GridSize,
-                                  neverSeen div GridSize) == '?'
+    check sim.lanes[0].knownMap.knownGlyph(neverSeen mod GridSize,
+                                           neverSeen div GridSize) == '?'
     ## A cell observed then left keeps its last content and its seen_tick.
-    let x = sim.agent.x
-    let y = sim.agent.y
-    let stamp = sim.knownMap.known(x, y).seenTick
+    let x = sim.lanes[0].agent.x
+    let y = sim.lanes[0].agent.y
+    let stamp = sim.lanes[0].knownMap.known(x, y).seenTick
     for i in 0 ..< 6:
-      sim.installPlan(@[pRight], false, 0, 0)
+      sim.beginTurn()
+      sim.installLanePlan(0, @[pRight], false, 0, 0)
       sim.stepTick()
-    check sim.knownMap.known(x, y).seenTick >= stamp
-    check sim.knownMap.cellsSeen() >= seenAtStart
+    check sim.lanes[0].knownMap.known(x, y).seenTick >= stamp
+    check sim.lanes[0].knownMap.cellsSeen() >= seenAtStart
 
   test "7. goto BFS":
     var map: KnownMap
@@ -352,21 +364,27 @@ suite "minigrid sim":
         of tfMultiroom:
           check roomOf(a.startX, a.startY) == 0
 
-    ## The layout of task k is identical no matter what happened in task k-1:
-    ## three different agent behaviours, same layouts.
+    ## The layout of phase k is identical no matter what happened in phase
+    ## k-1: three different agent behaviours, same layouts.
     var layouts: seq[seq[Cell]]
     for behaviour in 0 .. 2:
       var config = testConfig()
       var sim = initSimServer(config)
       sim.phase = Playing
-      sim.startTask(0)
-      for i in 0 ..< 30 * behaviour:
-        sim.installPlan(@[pRight, pForward], false, 0, 0)
+      sim.startPhase(0)
+      for i in 0 ..< 5 * behaviour:
+        sim.beginTurn()
+        for slot in 0 ..< sim.lanes.len:
+          sim.installLanePlan(slot, @[pRight, pForward], false, 0, 0)
         sim.stepTick()
       var seen: seq[seq[Cell]]
       for taskIndex in 0 ..< config.taskCount:
-        sim.startTask(taskIndex)
-        seen.add(sim.task.grid.cells.toSeq())
+        sim.startPhase(taskIndex)
+        seen.add(sim.lanes[0].task.grid.cells.toSeq())
+        ## AND the lane index is not a generator input: all four lanes hold
+        ## the byte-identical layout.
+        for slot in 1 ..< sim.lanes.len:
+          check sim.lanes[slot].task.grid.cells == sim.lanes[0].task.grid.cells
       if layouts.len == 0: layouts = seen
       else: check layouts == seen
 
@@ -375,23 +393,24 @@ suite "minigrid sim":
     var config = testConfig()
     var sim = initSimServer(config)
     sim.phase = Playing
-    sim.startTask(0)
-    sim.agent = Agent(x: GridSize - 3, y: GridSize - 2, dir: dirEast)
-    check not sim.succeeded()
-    sim.agent = Agent(x: GridSize - 2, y: GridSize - 2, dir: dirEast)
-    check sim.succeeded()
+    sim.startPhase(0)
+    sim.lanes[0].agent = Agent(x: GridSize - 3, y: GridSize - 2, dir: dirEast)
+    check not sim.lanes[0].succeeded()
+    sim.lanes[0].agent = Agent(x: GridSize - 2, y: GridSize - 2, dir: dirEast)
+    check sim.lanes[0].succeeded()
 
     ## doorkey: at the door without the key is not a solve.
-    sim.startTask(1)
-    sim.agent = Agent(x: sim.task.doorX - 1, y: sim.task.doorY, dir: dirEast)
-    check not sim.succeeded()
+    sim.startPhase(1)
+    sim.lanes[0].agent = Agent(x: sim.lanes[0].task.doorX - 1,
+                               y: sim.lanes[0].task.doorY, dir: dirEast)
+    check not sim.lanes[0].succeeded()
 
     ## keycorridor: holding the key but not the ball is not a solve.
-    sim.startTask(3)
-    sim.agent.carrying = ObjectRef(kind: ckKey, colour: coRed)
-    check not sim.succeeded()
-    sim.agent.carrying = sim.task.goalObject
-    check sim.succeeded()
+    sim.startPhase(3)
+    sim.lanes[0].agent.carrying = ObjectRef(kind: ckKey, colour: coRed)
+    check not sim.lanes[0].succeeded()
+    sim.lanes[0].agent.carrying = sim.lanes[0].task.goalObject
+    check sim.lanes[0].succeeded()
 
     ## babyai "next to" with the object still CARRIED must NOT count.
     var found = false
@@ -400,26 +419,27 @@ suite "minigrid sim":
       if task.instructionKind != 2: continue
       var b = initSimServer(testConfig(seed = seed))
       b.phase = Playing
-      b.task = task
-      b.taskStarted = true
-      b.agent = Agent(x: task.startX, y: task.startY, dir: task.startDir)
-      let spotB = b.task.grid.findObject(task.targetB)
+      b.lanes[0].task = task
+      b.lanes[0].taskStarted = true
+      b.lanes[0].agent = Agent(x: task.startX, y: task.startY,
+                               dir: task.startDir)
+      let spotB = b.lanes[0].task.grid.findObject(task.targetB)
       check spotB.found
       ## Place A adjacent to B but CARRIED: not a solve.
-      let spotA = b.task.grid.findObject(task.targetA)
-      b.task.grid.setAt(spotA.x, spotA.y, Cell(kind: ckEmpty))
-      b.agent.carrying = task.targetA
-      check not b.succeeded()
+      let spotA = b.lanes[0].task.grid.findObject(task.targetA)
+      b.lanes[0].task.grid.setAt(spotA.x, spotA.y, Cell(kind: ckEmpty))
+      b.lanes[0].agent.carrying = task.targetA
+      check not b.lanes[0].succeeded()
       ## Now drop it beside B: a solve.
       for dir in Dirs:
         let nx = spotB.x + DirDx[dir]
         let ny = spotB.y + DirDy[dir]
-        if b.task.grid.at(nx, ny).kind == ckEmpty:
-          b.task.grid.setAt(nx, ny,
+        if b.lanes[0].task.grid.at(nx, ny).kind == ckEmpty:
+          b.lanes[0].task.grid.setAt(nx, ny,
             Cell(kind: task.targetA.kind, colour: task.targetA.colour))
-          b.agent.carrying = ObjectRef()
+          b.lanes[0].agent.carrying = ObjectRef()
           break
-      check b.succeeded()
+      check b.lanes[0].succeeded()
       found = true
       break
     check found
@@ -427,25 +447,27 @@ suite "minigrid sim":
     ## xland with only P0 made is not a solve.
     var x = initSimServer(testConfig("xland"))
     x.phase = Playing
-    x.startTask(1)
-    check x.task.rules.len == 3
-    let p0 = x.task.rules[0].output
-    x.task.grid.setAt(1, 1, Cell(kind: p0.kind, colour: p0.colour))
-    check not x.succeeded()
-    let goal = x.task.goalObject
-    x.task.grid.setAt(2, 1, Cell(kind: goal.kind, colour: goal.colour))
-    check x.succeeded()
+    x.startPhase(1)
+    check x.lanes[0].task.rules.len == 3
+    let p0 = x.lanes[0].task.rules[0].output
+    x.lanes[0].task.grid.setAt(1, 1, Cell(kind: p0.kind, colour: p0.colour))
+    check not x.lanes[0].succeeded()
+    let goal = x.lanes[0].task.goalObject
+    x.lanes[0].task.grid.setAt(2, 1,
+      Cell(kind: goal.kind, colour: goal.colour))
+    check x.lanes[0].succeeded()
 
   test "10. subgoals are awarded once, in order, never revoked":
     for variant in ["gauntlet", "xland"]:
       for seed in [1, 42, 907]:
         let sim = playScripted(testConfig(variant, seed))
-        check sim.progressTotal() <= 3 * sim.config.taskCount
-        check sim.progressTotal() <= 15
-        for record in sim.records:
-          check record.progress in 0 .. 3
-          if record.outcome == toSolved:
-            check record.progress == 3
+        for slot in 0 ..< sim.lanes.len:
+          check sim.progressTotal(slot) <= 3 * sim.config.taskCount
+          check sim.progressTotal(slot) <= 15
+          for record in sim.lanes[slot].records:
+            check record.progress in 0 .. 3
+            if record.outcome == toSolved:
+              check record.progress == 3
 
   test "11. xland rules":
     for seed in 1 .. 200:
@@ -484,132 +506,188 @@ suite "minigrid sim":
     var config = testConfig()
     var sim = initSimServer(config)
     sim.phase = Playing
-    sim.startTask(0)
-    ## An empty queue pops `wait`, and the tick is still spent.
-    sim.installPlan(@[], false, 0, 0)
+    sim.startPhase(0)
+    ## An empty queue pops `wait`, and the tick is still spent — in EVERY
+    ## active lane.
+    sim.beginTurn()
     let before = sim.tickCount
     sim.stepTick()
     check sim.tickCount == before + 1
-    check sim.executed[^1] == pWait
-    ## A finished task breaks the tick loop: the remaining ticks are skipped
-    ## and never counted in taskTicks.
-    sim.startTask(0)
-    sim.agent = Agent(x: GridSize - 3, y: GridSize - 2, dir: dirEast)
-    sim.installPlan(@[pForward, pForward, pForward, pForward], false, 0, 0)
+    for slot in 0 ..< sim.lanes.len:
+      check sim.lanes[slot].executed[^1] == pWait
+      check sim.lanes[slot].taskTick == 1
+    ## A lane that resolves stops stepping for the rest of the turn; the
+    ## others keep going, and the SHARED phase advances only when all four
+    ## have resolved.
+    sim.startPhase(0)
+    sim.beginTurn()
+    sim.lanes[0].agent = Agent(x: GridSize - 3, y: GridSize - 2, dir: dirEast)
+    sim.installLanePlan(0, @[pForward, pForward, pForward, pForward], false,
+      0, 0)
     sim.stepTick()
-    check sim.taskOutcome == toSolved
-    check sim.queue.len == 0
-    let ticksAtSolve = sim.taskTick
-    sim.stepTick()                       ## the next tick starts the NEXT task
+    check sim.lanes[0].taskOutcome == toSolved
+    check sim.lanes[0].queue.len == 0
+    let ticksAtSolve = sim.lanes[0].taskTick
+    check sim.taskIndex == 0                 ## the phase is NOT over yet
+    let restingTick = sim.lanes[0].taskTick
+    sim.stepTick()
+    check sim.lanes[0].taskTick == restingTick   ## an idling lane costs no tick
+    check sim.lanes[1].taskTick == 2
+    ## Resolve the other three: the next turn boundary starts phase 2 in ALL
+    ## four lanes at once.
+    for slot in 1 ..< sim.lanes.len:
+      sim.lanes[slot].agent = Agent(x: GridSize - 3, y: GridSize - 2,
+                                    dir: dirEast)
+      sim.installLanePlan(slot, @[pForward], false, 0, 0)
+    sim.stepTick()
+    check sim.allLanesResolved()
+    sim.beginTurn()
     check sim.taskIndex == 1
-    check sim.records[0].ticks == ticksAtSolve
+    for slot in 0 ..< sim.lanes.len:
+      check sim.lanes[slot].taskIndex == 1
+    check sim.lanes[0].records[0].ticks == ticksAtSolve
 
-  test "13. scoring":
+  test "13. scoring, PER LANE":
     var rng = initRand(20260828)
     for i in 0 ..< 500:
       var config = testConfig()
       var sim = initSimServer(config)
-      sim.records = @[]
-      var solved = 0
-      var progress = 0
-      var speed = 0
-      for t in 0 ..< config.taskCount:
-        let outcome = [toSolved, toTimeout, toDied, toCrashed,
-                       toUnreached][rng.rand(4)]
-        let turns = rng.rand(config.taskTurnCap)
-        let credits = if outcome == toSolved: 3 else: rng.rand(2)
-        sim.records.add(TaskRecord(family: tfLavagap, outcome: outcome,
-          turns: turns, progress: credits))
-        if outcome == toSolved:
-          inc solved
-          speed += max(0, config.taskTurnCap - turns)
-        progress += credits
-      check sim.tasksSolved() == solved
-      check sim.progressTotal() == progress
-      check sim.speedTotal() == speed
-      check sim.score() == 100_000 * solved + 1_000 * progress + 10 * speed
-      check sim.score() >= 0
+      for slot in 0 ..< sim.lanes.len:
+        sim.lanes[slot].records = @[]
+        var solved = 0
+        var progress = 0
+        var speed = 0
+        for t in 0 ..< config.taskCount:
+          let outcome = [toSolved, toTimeout, toDied, toCrashed,
+                         toUnreached][rng.rand(4)]
+          let turns = rng.rand(config.taskTurnCap)
+          let credits = if outcome == toSolved: 3 else: rng.rand(2)
+          sim.lanes[slot].records.add(TaskRecord(family: tfLavagap,
+            outcome: outcome, turns: turns, progress: credits))
+          if outcome == toSolved:
+            inc solved
+            speed += max(0, config.taskTurnCap - turns)
+          progress += credits
+        check sim.tasksSolved(slot) == solved
+        check sim.progressTotal(slot) == progress
+        check sim.speedTotal(slot) == speed
+        check sim.score(slot) == 100_000 * solved + 1_000 * progress +
+          10 * speed
+        check sim.score(slot) >= 0
+        ## The new bound from taskTurnCap = 6.
+        check sim.speedTotal(slot) <= 25
+        check sim.score(slot) <= 515_250
     ## The two lexicographic dominance bounds, and the extremes.
-    check 1_000 * 15 + 10 * 50 == 15_500
-    check 15_500 < 100_000
-    check 10 * 50 == 500
-    check 500 < 1_000
-    check 100_000 * 5 + 1_000 * 15 + 10 * 50 == 515_500
-    ## win / winner.
+    check 1_000 * 15 + 10 * 25 == 15_250
+    check 15_250 < 100_000
+    check 10 * 25 == 250
+    check 250 < 1_000
+    check 100_000 * 5 + 1_000 * 15 + 10 * 25 == 515_250
+    ## win / winner: STRICTLY highest, else a genuine draw.
     var sim = initSimServer(testConfig())
-    for t in 0 ..< 5:
-      sim.records.add(TaskRecord(outcome: (if t < 3: toSolved else: toTimeout),
-                                 progress: (if t < 3: 3 else: 0)))
-    check sim.tasksSolved() >= sim.config.parTasks
+    for slot in 0 ..< sim.lanes.len:
+      for t in 0 ..< 5:
+        let solved = t < (if slot == 0: 3 else: 1)
+        sim.lanes[slot].records.add(TaskRecord(
+          outcome: (if solved: toSolved else: toTimeout),
+          progress: (if solved: 3 else: 0)))
+    check sim.tasksSolved(0) >= sim.config.parTasks
     let results = parseJson(sim.gauntletResultsJson())
     check results["win"][0].getBool()
+    check not results["win"][1].getBool()
     check results["winner"].getInt() == 0
+    check not results["tied"].getBool()
+    ## A four-way tie names NO winner: an exact tie in `scores` is an exact
+    ## tie in all three components, which is a genuine draw.
+    var drawn = initSimServer(testConfig())
+    for slot in 0 ..< drawn.lanes.len:
+      for t in 0 ..< 5:
+        drawn.lanes[slot].records.add(TaskRecord(outcome: toSolved,
+          turns: 2, progress: 3))
+    let drawnResults = parseJson(drawn.gauntletResultsJson())
+    check drawnResults["winner"].kind == JNull
+    check drawnResults["tied"].getBool()
     var poor = initSimServer(testConfig())
-    for t in 0 ..< 5:
-      poor.records.add(TaskRecord(outcome: toTimeout))
+    for slot in 0 ..< poor.lanes.len:
+      for t in 0 ..< 5:
+        poor.lanes[slot].records.add(TaskRecord(outcome: toTimeout))
     let poorResults = parseJson(poor.gauntletResultsJson())
     check not poorResults["win"][0].getBool()
     check poorResults["winner"].kind == JNull
+    check poorResults["tied"].getBool()
     check poorResults["scores"][0].getInt() == 0
 
-  test "14. end conditions":
-    ## gauntletComplete.
+  test "14. end conditions, episode and lane":
+    ## allLanesComplete.
     let complete = playScripted(testConfig())
     check complete.endReason == erComplete
-    check complete.endRule == edGauntletComplete
-    check complete.records.len == complete.config.taskCount
+    check complete.endRule == edAllLanesComplete
+    for slot in 0 ..< complete.lanes.len:
+      check complete.lanes[slot].records.len == complete.config.taskCount
+      check complete.lanes[slot].endRule == lrGauntletComplete
 
-    ## A forced wall-clock stop mid-gauntlet marks every unstarted task
-    ## `unreached` with zero turns, zero ticks and zero progress, and still
-    ## scores the tasks that ran.
+    ## A forced wall-clock stop mid-gauntlet marks every unstarted phase
+    ## `unreached` with zero turns, zero ticks and zero progress IN EVERY
+    ## LANE, still scores the phases that ran, and gives every lane
+    ## `laneEndRule = wallClock`.
     var sim = initSimServer(testConfig())
     sim.phase = Playing
-    sim.startTask(0)
-    sim.records.add(TaskRecord(family: tfLavagap, outcome: toSolved, turns: 4,
-                               ticks: 41, progress: 3))
-    sim.startTask(1)
+    sim.startPhase(0)
+    for slot in 0 ..< sim.lanes.len:
+      sim.lanes[slot].records.add(TaskRecord(family: tfLavagap,
+        outcome: toSolved, turns: 4, ticks: 41, progress: 3))
+    sim.startPhase(1)
     sim.applyStop(edWallClock, "forced")
     check sim.endReason == erDeadline
     check sim.endRule == edWallClock
     let stopped = parseJson(sim.gauntletResultsJson())
-    check stopped["taskOutcome"][0].getStr() == "solved"
-    check stopped["tasksSolved"].getInt() == 1
-    for i in 2 ..< 5:
-      check stopped["taskOutcome"][i].getStr() == "unreached"
-      check stopped["taskTurns"][i].getInt() == 0
-      check stopped["taskTicks"][i].getInt() == 0
-      check stopped["taskProgress"][i].getInt() == 0
+    for slot in 0 ..< sim.lanes.len:
+      check stopped["taskOutcome"][slot][0].getStr() == "solved"
+      check stopped["tasksSolved"][slot].getInt() == 1
+      check stopped["laneEndRule"][slot].getStr() == "wallClock"
+      for i in 2 ..< 5:
+        check stopped["taskOutcome"][slot][i].getStr() == "unreached"
+        check stopped["taskTurns"][slot][i].getInt() == 0
+        check stopped["taskTicks"][slot][i].getInt() == 0
+        check stopped["taskProgress"][slot][i].getInt() == 0
 
     ## A forced fault.
     var faulted = initSimServer(testConfig())
     faulted.phase = Playing
-    faulted.startTask(0)
+    faulted.startPhase(0)
     faulted.applyStop(edFault, "boom")
     check faulted.endReason == erFault
     check faulted.endRule == edFault
     check faulted.stopDetail == "boom"
 
-    ## The turn cap is an INDEPENDENT guard: with tasks still to come it ends
+    ## The turn cap is an INDEPENDENT guard: with phases still to come it ends
     ## the episode `complete` on `turnCap` rather than letting any arithmetic
     ## error produce an unbounded loop.
     var capped = initSimServer(testConfig())
     capped.phase = Playing
-    capped.startTask(0)
+    capped.startPhase(0)
     capped.config.maxTurns = 1
+    capped.beginTurn()
     capped.turnsPlayed = 1
-    capped.agent = Agent(x: GridSize - 3, y: GridSize - 2, dir: dirEast)
-    capped.installPlan(@[pForward], false, 0, 0)
+    for slot in 0 ..< capped.lanes.len:
+      capped.lanes[slot].agent = Agent(x: GridSize - 3, y: GridSize - 2,
+                                       dir: dirEast)
+      capped.installLanePlan(slot, @[pForward], false, 0, 0)
     capped.stepTick()
-    check capped.taskOutcome == toSolved
+    check capped.lanes[0].taskOutcome == toSolved
     check capped.phase == GameOver
     check capped.endReason == erComplete
     check capped.endRule == edTurnCap
+    for slot in 0 ..< capped.lanes.len:
+      check capped.lanes[slot].endRule == lrTurnCap
 
-    ## Exactly three reason values are legal, and four end rules.
+    ## The closed enums: three reasons, four EPISODE rules, three LANE rules.
     for reason in EndReason:
       check $reason in ["complete", "deadline", "fault"]
     for rule in EndRule:
-      check $rule in ["", "gauntletComplete", "turnCap", "wallClock", "fault"]
+      check $rule in ["", "allLanesComplete", "turnCap", "wallClock", "fault"]
+    for rule in LaneEndRule:
+      check $rule in ["", "gauntletComplete", "turnCap", "wallClock"]
 
   test "15. no floating point in the sim":
     ## Integer arithmetic only — that is what makes the native <-> wasm hash
@@ -629,11 +707,15 @@ suite "minigrid sim":
             check false
 
   test "16. tick budget":
-    ## A full xland episode of 660 ticks completes well inside a second of a
-    ## release build; this asserts it terminates and stays inside the cap.
+    ## A full xland episode of 720 ticks over four lanes completes well inside
+    ## a second of a release build; this asserts it terminates and stays
+    ## inside the cap, in every lane.
     let sim = playScripted(testConfig("xland", 3))
     check sim.tickCount <= sim.config.maxTicks + 8
-    var totalTicks = 0
-    for record in sim.records:
-      totalTicks += record.ticks
-    check totalTicks <= sim.config.maxTicks
+    for slot in 0 ..< sim.lanes.len:
+      var totalTicks = 0
+      for record in sim.lanes[slot].records:
+        totalTicks += record.ticks
+      check totalTicks <= sim.config.maxTicks
+      check totalTicks == sim.lanes[slot].laneTicks
+      check sim.lanes[slot].laneTicks <= sim.turnsPlayed * sim.config.turnTicks

@@ -80,7 +80,7 @@ proc buildReplayViewerPacket*(sim: var SimServer, replay: ReplayPlayer,
   let sendLead = not state.momentumSent and replay.scanComplete()
   result.addChrome(sim.buildStateJson(
     events, replay.playing, replay.replaySpeed(), replay.replayMaxTick(),
-    replay.looping, true, replay.hashMismatchTick, -1,
+    replay.looping, true, replay.hashMismatchTick, state.selectedJoinOrder,
     (if sendLead: replay.leadSeries else: @[]),
     replay.replayStartTick(), replay.endHoldSecondsLeft(),
     replay.skipLulls,

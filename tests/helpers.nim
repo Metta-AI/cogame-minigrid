@@ -14,38 +14,54 @@ proc testConfig*(variant = "gauntlet", seed = 42): GameConfig =
   result.lobbyJoinTimeoutTicks = 4
 
 proc playScripted*(config: GameConfig, kind = blScout,
-                   maxTurns = 400): SimServer =
-  ## A whole scripted episode, driven exactly the way `server.nim`'s turn
-  ## boundary drives it.
+                   maxTurns = 400, kinds: seq[Baseline] = @[]): SimServer =
+  ## A whole scripted episode over ALL FOUR LANES, driven exactly the way
+  ## `server.nim`'s turn boundary drives it. `kinds`, when given, seats one
+  ## baseline per lane; otherwise every lane plays `kind`.
   result = initSimServer(config)
   result.phase = Playing
-  result.startTask(0)
   var turns = 0
   while result.phase == Playing and turns < maxTurns:
     if result.waitingForPlan():
-      result.advanceTasks()
+      result.beginTurn()
       if result.phase != Playing:
         break
-      let plan = scriptedPlan(result, kind)
-      let expansion = expandPlan(result.knownMap, result.agent.x,
-        result.agent.y, result.agent.dir, plan.actions,
-        result.config.macroPrimitiveCap, result.config.turnTicks)
-      result.installPlan(expansion.primitives, expansion.truncated,
-        plan.dropped + plan.overCap, expansion.unreachable)
       inc turns
+      for slot in 0 ..< result.lanes.len:
+        if result.lanes[slot].laneResolved():
+          continue
+        let seatKind =
+          if kinds.len > 0: kinds[slot mod kinds.len] else: kind
+        let plan = scriptedPlan(result.lanes[slot], result.config, seatKind)
+        let expansion = expandPlan(result.lanes[slot].knownMap,
+          result.lanes[slot].agent.x, result.lanes[slot].agent.y,
+          result.lanes[slot].agent.dir, plan.actions,
+          result.config.macroPrimitiveCap, result.config.turnTicks)
+        result.installLanePlan(slot, expansion.primitives,
+          expansion.truncated, plan.dropped + plan.overCap,
+          expansion.unreachable)
     result.stepTick()
     result.pending.setLen(0)
   if result.phase == Playing:
-    result.finish(erComplete, edGauntletComplete)
+    result.finish(erComplete, edAllLanesComplete)
 
-proc randomKnownMap*(sim: var SimServer, rng: var Rand, fraction: int) =
-  ## Reveal a pseudo-random subset of the true grid, so the baselines are
-  ## exercised against partial maps rather than a fully explored one.
+proc playLane*(config: GameConfig, slot: int, kind = blScout,
+               maxTurns = 400): SimServer =
+  ## The SAME episode with a single lane — the isolation test's control: lane
+  ## `slot` run alone must reproduce its four-lane trajectory exactly.
+  var one = config
+  one.numAgents = 1
+  one.minPlayers = 1
+  playScripted(one, kind, maxTurns)
+
+proc randomKnownMap*(lane: var Lane, rng: var Rand, fraction, tick: int) =
+  ## Reveal a pseudo-random subset of ONE lane's true grid, so the baselines
+  ## are exercised against partial maps rather than a fully explored one.
   for slot in 0 ..< GridCells:
     if rng.rand(99) < fraction:
-      sim.knownMap.cells[slot].seen = true
-      sim.knownMap.cells[slot].cell = sim.task.grid.cells[slot]
-      sim.knownMap.cells[slot].seenTick = sim.tickCount
+      lane.knownMap.cells[slot].seen = true
+      lane.knownMap.cells[slot].cell = lane.task.grid.cells[slot]
+      lane.knownMap.cells[slot].seenTick = tick
 
 proc repoRoot*(): string =
   ## Tests run from the repo ROOT (`nim r --path:src tests/x.nim`), but also

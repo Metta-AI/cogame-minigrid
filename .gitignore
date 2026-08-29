@@ -7,3 +7,10 @@ replay-viewer/dist/
 __pycache__/
 *.pyc
 .DS_Store
+
+# locally built tool binaries (nim c -r leaves them beside the source)
+/tools/record_fixture
+/tools/gen_label_manifest
+/tools/tune_baselines
+/tools/dump_board_preview
+/tests/shards/tests

@@ -10,6 +10,15 @@
 import std/strutils
 import sim, global
 
+const SpriteMessageTypes* = [1, 2, 3, 4, 5, 6]
+  ## THE CLOSED SET OF SPRITE PROTOCOL MESSAGE TYPES: 0x01 sprite, 0x02
+  ## object, 0x03 delete object, 0x04 clear objects, 0x05 viewport, 0x06
+  ## layer. THE FORK ADDS NONE. `tests/test_minigrid_wire.nim` asserts this
+  ## set equals the set the fork emits equals the set `broadcast_core.js`
+  ## handles; if a future feature ever needs a seventh, the writer, the three
+  ## length tables, `broadcast_core.js` and `wire_constants.js` change in one
+  ## commit.
+
 proc jsIntArray(values: openArray[int]): string =
   result = "["
   for i, value in values:
@@ -23,7 +32,10 @@ const WireConstantsJs* =
   ",chromeSpriteId:" & $BroadcastChromeSpriteId &
   ",cellPx:" & $CellPx &
   ",gridSize:" & $GridSize &
+  ",surfaceCells:" & $SurfaceCells &
+  ",lanes:" & $LaneCount &
   ",viewSize:" & $ViewSize &
+  ",messageTypes:" & jsIntArray(SpriteMessageTypes) &
   "};window.CTF_WIRE=window.CTF_WIRE||window.MINIGRID_WIRE;"
   ## The starter's `broadcast_core.js` reads `window.CTF_WIRE` for the chrome
   ## sprite id. It is kept as an ALIAS of the minigrid block rather than

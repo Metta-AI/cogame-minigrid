@@ -122,6 +122,8 @@ def summarise(path: str) -> dict:
         if kind == "directive":
             plans.append({
                 "turn": obj.get("turn"),
+                "slot": obj.get("slot", 0),
+                "alias": obj.get("alias", ""),
                 "task": obj.get("task"),
                 "source": obj.get("source"),
                 "latency_ms": obj.get("latency_ms"),
@@ -130,10 +132,12 @@ def summarise(path: str) -> dict:
                 "truncated": obj.get("truncated"),
                 "dropped": obj.get("dropped"),
                 "unreachable": obj.get("unreachable"),
+                "cause": obj.get("cause", ""),
                 "say": obj.get("say") or "",
             })
             if obj.get("say"):
-                says.append(obj["say"])
+                says.append({"slot": obj.get("slot", 0),
+                             "text": obj["say"]})
         elif kind == "fallback":
             fallbacks += 1
         elif kind == "register":
@@ -150,7 +154,18 @@ def summarise(path: str) -> dict:
     # spaces never mix.
     names = results.get("names") or [
         p.get("name", "") for p in (config.get("players") or [])]
-    aliases = results.get("aliases") or ["Alpha"]
+    aliases = results.get("aliases") or ["Alpha", "Beta", "Gamma", "Delta"]
+    lanes = results.get("lanes") or list(range(len(aliases)))
+    # Per-seat views of the two per-turn streams: this game is four ISOLATED
+    # lanes, so a summary that pooled them would hide which cog said what.
+    plans_by_seat: dict = {}
+    says_by_seat: dict = {}
+    for plan in plans:
+        plans_by_seat.setdefault(str(plan.get("slot", 0)), []).append(
+            plan.get("turn"))
+    for say in says:
+        says_by_seat.setdefault(str(say.get("slot", 0)), []).append(
+            say.get("text"))
 
     return {
         "protocol": protocol,
@@ -160,13 +175,15 @@ def summarise(path: str) -> dict:
         "taskLadder": config.get("taskLadder") or [],
         "names": names,
         "aliases": aliases,
+        "lanes": lanes,
         "policyKinds": [r.get("kind", "") for r in registers],
-        "tickCount": len(results.get("taskTicks") or []) and
-                     sum(results.get("taskTicks") or []) or
-                     results.get("finalTick", 0),
+        "tickCount": results.get("finalTick", 0),
         "plans": plans,
+        "plansBySeat": plans_by_seat,
         "says": says,
+        "saysBySeat": says_by_seat,
         "fallbacks": fallbacks,
+        "fallbackCauses": results.get("fallbackCauses") or [],
         "budgetGuards": budget_guards,
         "stops": stops,
         "results": results,

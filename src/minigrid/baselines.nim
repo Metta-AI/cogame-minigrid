@@ -5,6 +5,10 @@
 ## `say` OR `notes` — a baseline that narrated would make the feed lie about
 ## which seats are LLMs.
 ##
+## EVERY baseline is a PURE FUNCTION OF ONE LANE: it takes that lane and the
+## config, never a `SimServer`, so a baseline cannot read a rival lane even by
+## accident (addendum v2 §Lane isolation).
+##
 ## `scout` is load-bearing in three places: it is the certification player,
 ## the per-turn fallback when a seat's LLM call fails twice, and the default
 ## for a seat that registers with neither PLAYER_PROMPT nor PLAYER_SCRIPTED.
@@ -41,7 +45,7 @@ const DefaultBaselineParams* = BaselineParams(
   ## one wins; `tools/ci/baseline_tuning.json` records the whole grid and
   ## `ci.yml` re-runs the sweep with `--check`.
   frontierAdjacencyWeight: 1,
-  spinTurns: 12,
+  spinTurns: 24,
   tieBreakByDistance: false
 )
 
@@ -53,27 +57,27 @@ proc parseBaseline*(text: string): Baseline =
   of "bumper", "bump": blBumper
   else: blScout
 
-proc goalCell(sim: SimServer): tuple[found: bool, x, y: int] =
+proc goalCell(lane: Lane): tuple[found: bool, x, y: int] =
   ## The goal square, as the agent REMEMBERS it — never the true grid.
   for slot in 0 ..< GridCells:
-    let entry = sim.knownMap.cells[slot]
+    let entry = lane.knownMap.cells[slot]
     if entry.seen and entry.cell.kind == ckGoal:
       return (true, slot mod GridSize, slot div GridSize)
   (false, 0, 0)
 
-proc knownObject(sim: SimServer, obj: ObjectRef): tuple[found: bool, x, y: int] =
+proc knownObject(lane: Lane, obj: ObjectRef): tuple[found: bool, x, y: int] =
   for slot in 0 ..< GridCells:
-    let entry = sim.knownMap.cells[slot]
+    let entry = lane.knownMap.cells[slot]
     if not entry.seen or entry.cell.obstacle:
       continue
     if entry.cell.kind == obj.kind and entry.cell.colour == obj.colour:
       return (true, slot mod GridSize, slot div GridSize)
   (false, 0, 0)
 
-proc knownDoor(sim: SimServer, colour: Colour,
+proc knownDoor(lane: Lane, colour: Colour,
                states: set[DoorState]): tuple[found: bool, x, y: int] =
   for slot in 0 ..< GridCells:
-    let entry = sim.knownMap.cells[slot]
+    let entry = lane.knownMap.cells[slot]
     if not entry.seen or entry.cell.kind != ckDoor:
       continue
     if entry.cell.door notin states:
@@ -83,35 +87,35 @@ proc knownDoor(sim: SimServer, colour: Colour,
     return (true, slot mod GridSize, slot div GridSize)
   (false, 0, 0)
 
-proc missionTarget(sim: SimServer): tuple[found: bool, obj: ObjectRef] =
+proc missionTarget(lane: Lane): tuple[found: bool, obj: ObjectRef] =
   ## What the current subgoal names, as an object the baseline can walk to.
-  case sim.task.family
+  case lane.task.family
   of tfDoorkey:
-    if sim.agent.carrying.kind == ckKey and
-        sim.agent.carrying.colour == sim.task.keyColour:
+    if lane.agent.carrying.kind == ckKey and
+        lane.agent.carrying.colour == lane.task.keyColour:
       (false, ObjectRef())
     else:
-      (true, ObjectRef(kind: ckKey, colour: sim.task.keyColour))
+      (true, ObjectRef(kind: ckKey, colour: lane.task.keyColour))
   of tfKeycorridor:
-    if sim.agent.carrying == sim.task.goalObject:
+    if lane.agent.carrying == lane.task.goalObject:
       (false, ObjectRef())
-    elif sim.task.grid.at(sim.task.doorX, sim.task.doorY).door == dsOpen:
-      (true, sim.task.goalObject)
-    elif sim.agent.carrying.kind == ckKey and
-        sim.agent.carrying.colour == sim.task.keyColour:
+    elif lane.task.grid.at(lane.task.doorX, lane.task.doorY).door == dsOpen:
+      (true, lane.task.goalObject)
+    elif lane.agent.carrying.kind == ckKey and
+        lane.agent.carrying.colour == lane.task.keyColour:
       (false, ObjectRef())
     else:
-      (true, ObjectRef(kind: ckKey, colour: sim.task.keyColour))
+      (true, ObjectRef(kind: ckKey, colour: lane.task.keyColour))
   of tfBabyai:
-    (true, sim.task.targetA)
+    (true, lane.task.targetA)
   else:
     (false, ObjectRef())
 
-proc frontierCell(sim: SimServer,
+proc frontierCell(lane: Lane,
                   params: BaselineParams): tuple[found: bool, x, y: int] =
   ## The traversable known cell 4-adjacent to the most `?` cells; ties broken
   ## by lowest BFS distance, then by lowest (y, x).
-  let search = sim.knownMap.bfs(sim.agent.x, sim.agent.y)
+  let search = lane.knownMap.bfs(lane.agent.x, lane.agent.y)
   var
     best = -1
     bestDist = 0
@@ -119,9 +123,9 @@ proc frontierCell(sim: SimServer,
     let
       x = slot mod GridSize
       y = slot div GridSize
-    if not search.reached[slot] or not sim.knownMap.traversable(x, y):
+    if not search.reached[slot] or not lane.knownMap.traversable(x, y):
       continue
-    let unknown = sim.knownMap.frontierScore(x, y)
+    let unknown = lane.knownMap.frontierScore(x, y)
     if unknown == 0:
       continue
     let distance = search.dist[slot]
@@ -133,7 +137,7 @@ proc frontierCell(sim: SimServer,
       bestDist = distance
       result = (true, x, y)
 
-proc safeForwards(sim: SimServer, fromX, fromY: int, dir: Dir,
+proc safeForwards(lane: Lane, fromX, fromY: int, dir: Dir,
                   count: int): seq[Action] =
   ## `count` forwards from a pose, stopping at the first cell the agent KNOWS
   ## is lava or holds an obstacle. Walking into the UNKNOWN is the point of
@@ -146,7 +150,7 @@ proc safeForwards(sim: SimServer, fromX, fromY: int, dir: Dir,
     let
       nx = x + DirDx[dir]
       ny = y + DirDy[dir]
-    let entry = sim.knownMap.known(nx, ny)
+    let entry = lane.knownMap.known(nx, ny)
     if entry.seen and (entry.cell.kind == ckLava or entry.cell.obstacle):
       break
     result.add(Action(kind: akForward))
@@ -155,25 +159,25 @@ proc safeForwards(sim: SimServer, fromX, fromY: int, dir: Dir,
     x = nx
     y = ny
 
-proc scoutPlan*(sim: SimServer,
+proc scoutPlan*(lane: Lane, config: GameConfig,
                 params = DefaultBaselineParams): Directive =
   ## The deterministic frontier explorer with a goal check. Every turn, the
   ## FIRST matching rule wins, emitting at most `maxActionsPerTurn` actions.
   result.source = dsScripted
-  let front = sim.agent.ahead()
-  let frontCell = sim.task.grid.at(front.x, front.y)
-  let cap = max(1, sim.config.maxActionsPerTurn)
+  let front = lane.agent.ahead()
+  let frontCell = lane.task.grid.at(front.x, front.y)
+  let cap = max(1, config.maxActionsPerTurn)
 
   # 1. Finish if you can.
-  let wanted = sim.missionTarget()
-  if wanted.found and not sim.agent.carries() and
-      sim.task.grid.objectAt(front.x, front.y) == wanted.obj and
+  let wanted = lane.missionTarget()
+  if wanted.found and not lane.agent.carries() and
+      lane.task.grid.objectAt(front.x, front.y) == wanted.obj and
       wanted.obj.kind in {ckKey, ckBall, ckBox}:
     result.actions.add(Action(kind: akPickup))
     return
   if frontCell.kind == ckDoor:
-    if frontCell.door == dsLocked and sim.agent.carrying.kind == ckKey and
-        sim.agent.carrying.colour == frontCell.colour:
+    if frontCell.door == dsLocked and lane.agent.carrying.kind == ckKey and
+        lane.agent.carrying.colour == frontCell.colour:
       result.actions.add(Action(kind: akToggle))
       return
     if frontCell.door == dsClosed:
@@ -189,7 +193,7 @@ proc scoutPlan*(sim: SimServer,
 
   # 2. Go to the known target.
   if wanted.found:
-    let spot = sim.knownObject(wanted.obj)
+    let spot = lane.knownObject(wanted.obj)
     if spot.found:
       result.actions.add(Action(kind: akGoto, x: spot.x, y: spot.y))
       result.actions.add(Action(kind: akPickup))
@@ -197,21 +201,21 @@ proc scoutPlan*(sim: SimServer,
   block doors:
     ## A locked door is never worth a turn without the key in hand.
     let carriedKey =
-      if sim.agent.carrying.kind == ckKey: sim.agent.carrying.colour
+      if lane.agent.carrying.kind == ckKey: lane.agent.carrying.colour
       else: coNone
     if carriedKey != coNone:
-      let locked = sim.knownDoor(carriedKey, {dsLocked})
+      let locked = lane.knownDoor(carriedKey, {dsLocked})
       if locked.found:
         result.actions.add(Action(kind: akGoto, x: locked.x, y: locked.y))
         result.actions.add(Action(kind: akToggle))
         result.actions.add(Action(kind: akForward))   ## through the door
         break doors
-    let goal = sim.goalCell()
-    if goal.found and sim.task.family in
+    let goal = lane.goalCell()
+    if goal.found and lane.task.family in
         {tfLavagap, tfDoorkey, tfMultiroom, tfDynamic}:
       result.actions.add(Action(kind: akGoto, x: goal.x, y: goal.y))
       break doors
-    let closed = sim.knownDoor(coNone, {dsClosed})
+    let closed = lane.knownDoor(coNone, {dsClosed})
     if closed.found:
       result.actions.add(Action(kind: akGoto, x: closed.x, y: closed.y))
       result.actions.add(Action(kind: akToggle))
@@ -224,15 +228,15 @@ proc scoutPlan*(sim: SimServer,
 
   # 3. Go to the nearest frontier, then actually cross into the unknown and
   #    change heading so the next view is a different one.
-  let frontier = sim.frontierCell(params)
+  let frontier = lane.frontierCell(params)
   if frontier.found:
     result.actions.add(Action(kind: akGoto, x: frontier.x, y: frontier.y))
     ## Cross INTO the unknown, then change heading so the next view is a
     ## different one — but never step onto a cell already known to be lava or
     ## to hold an obstacle.
-    let walk = gotoPrimitives(sim.knownMap, sim.agent.x, sim.agent.y,
-      sim.agent.dir, frontier.x, frontier.y, sim.config.macroPrimitiveCap)
-    for action in safeForwards(sim, walk.x, walk.y, walk.dir, 2):
+    let walk = gotoPrimitives(lane.knownMap, lane.agent.x, lane.agent.y,
+      lane.agent.dir, frontier.x, frontier.y, config.macroPrimitiveCap)
+    for action in safeForwards(lane, walk.x, walk.y, walk.dir, 2):
       result.actions.add(action)
     result.actions.add(Action(kind: akRight))
     return
@@ -241,22 +245,22 @@ proc scoutPlan*(sim: SimServer,
   for i in 0 ..< min(params.spinTurns, cap):
     result.actions.add(Action(kind: akRight))
 
-proc bumperPlan*(sim: SimServer,
+proc bumperPlan*(lane: Lane, config: GameConfig,
                  params = DefaultBaselineParams): Directive =
   ## The reactive control, four lines: every turn emit twelve actions, each
   ## `forward` if the cell it expects to face is traversable in the known map
   ## and not lava, else `right`. No memory, no BFS, no mission parsing.
   result.source = dsScripted
   var
-    x = sim.agent.x
-    y = sim.agent.y
-    dir = sim.agent.dir
-  for i in 0 ..< max(1, sim.config.maxActionsPerTurn):
+    x = lane.agent.x
+    y = lane.agent.y
+    dir = lane.agent.dir
+  for i in 0 ..< max(1, config.maxActionsPerTurn):
     let
       nx = x + DirDx[dir]
       ny = y + DirDy[dir]
-    if sim.knownMap.traversable(nx, ny) and
-        sim.knownMap.known(nx, ny).cell.kind != ckLava:
+    if lane.knownMap.traversable(nx, ny) and
+        lane.knownMap.known(nx, ny).cell.kind != ckLava:
       result.actions.add(Action(kind: akForward))
       x = nx
       y = ny
@@ -264,10 +268,10 @@ proc bumperPlan*(sim: SimServer,
       result.actions.add(Action(kind: akRight))
       dir = Dir((ord(dir) + 1) mod 4)
 
-proc scriptedPlan*(sim: SimServer, kind: Baseline,
+proc scriptedPlan*(lane: Lane, config: GameConfig, kind: Baseline,
                    params = DefaultBaselineParams): Directive =
   ## The one entry point. `scout` is imported by the decision engine as its
   ## fallback — never duplicated — so the two cannot drift.
   case kind
-  of blScout: scoutPlan(sim, params)
-  of blBumper: bumperPlan(sim, params)
+  of blScout: scoutPlan(lane, config, params)
+  of blBumper: bumperPlan(lane, config, params)

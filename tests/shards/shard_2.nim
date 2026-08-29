@@ -1,1 +1,1 @@
-import test_minigrid_driver, test_minigrid_events
+import test_minigrid_driver, test_minigrid_events, test_minigrid_isolation

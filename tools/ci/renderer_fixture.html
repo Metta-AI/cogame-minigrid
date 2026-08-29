@@ -26,13 +26,22 @@
   drawing (the particle-worlds 2026-08-26 scar). It drives the real page's own
   MinigridChrome.frame()/event() entry points with a worst case:
 
-    * a `say` filled to exactly MaxSayRunes (140) with 4-byte emoji,
+    * FOUR `say`s at once — one per lane — each filled to exactly MaxSayRunes
+      (140) with 4-byte emoji,
     * a mission sentence at full length,
-    * a fully fogged board and all five task-pip states,
+    * a fully fogged board and all five task-pip states across four lanes,
     * an `xland` produce banner and an unlock beat,
     * a failed-by-lava endcard,
 
-  at several canvas widths INCLUDING 360 px, then transcribes every DOM text
+  and it ASSERTS THE LAYOUT CONTRACT (addendum v2 §Tests 56) at 1280 px and
+  360 px: the mission ribbon, the five task pips, the POV inset, the four
+  plates and the feed each have an EMPTY intersection with the board rect,
+  none sits inside var(--band), none is clipped by var(--topband), and the pip
+  captions do not overlap each other. It also asserts THE SEEK CONTRACT
+  (§Tests 52): a click at f in {0, 0.25, 0.5, 0.75, 1.0} seeks to
+  first + round(f * span), through the shipped page's own scrubAxis().
+
+  It runs at several canvas widths INCLUDING 360 px, then transcribes every DOM text
   run the real page produced onto a canvas at its measured geometry, so
   `viewer_smoke.mjs --strict-text-bounds` has something to measure (the page's
   own board pixels are drawn in a Worker on an OffscreenCanvas, where the
@@ -45,7 +54,10 @@
 (function () {
   'use strict';
 
-  var WIDTHS = [960, 640, 360];
+  var WIDTHS = [1280, 640, 360];
+  var LANES = 4;
+  var COLOURS = ['red', 'blue', 'green', 'yellow'];
+  var ALIASES = ['Alpha', 'Beta', 'Gamma', 'Delta'];
   var SAY = (function () {
     // Exactly 140 runes, with 4-byte emoji sitting on the boundary. The base
     // sentence is 130 runes, so it is REPEATED before the slice: slicing 138
@@ -62,68 +74,110 @@
     var states = ['solved', 'failed', 'current', 'pending', 'unreached'];
     var fams = ['lavagap', 'doorkey', 'multiroom', 'keycorridor', 'babyai'];
     return states.map(function (state, i) {
-      return { i: i, state: state, family: fams[i], mission: MISSION,
-               turns: 11 - i, credits: (i === 0 ? 3 : i % 3) };
+      // Every quadrant state, in every pip: each lane gets a different one.
+      var lanes = [];
+      for (var q = 0; q < LANES; q++) lanes.push(states[(i + q) % states.length]);
+      return { i: i, family: fams[i], mission: MISSION, current: i === 2,
+               lanes: lanes, turns: [6, 5, 4, 3], credits: [3, 2, 1, 0] };
     });
   }
 
-  function worstState(tick) {
+  function laneStates() {
     var view = ['???????', '??###??', '?#~G~#?', '?#kob#?', '?##L##?',
                 '?......', '...A...'];
+    var out = [];
+    for (var s = 0; s < LANES; s++) {
+      out.push({
+        s: s, alias: ALIASES[s], colour: COLOURS[s],
+        solved: 3 - s, score: 312180 - s * 100000, credits: 12 - s * 3,
+        seen: 97 - s * 9, turn: 4 + s, resolved: s === 3,
+        outcome: s === 3 ? 'timeout' : 'pending',
+        dir: ['east', 'south', 'west', 'north'][s],
+        carrying: s % 2 === 0 ? 'yellow key' : '',
+        fallbacks: 2 - (s % 2), deaths: s % 2, crashes: s % 2,
+        doors: 4 - s, picked: 3 - s, productions: 2, view: view
+      });
+    }
+    return out;
+  }
+
+  function worstState(tick) {
+    var teams = {};
+    var roster = [];
+    var overTeams = {};
+    for (var s = 0; s < LANES; s++) {
+      teams[COLOURS[s]] = { lives: 12 - s * 3, prog: 3 - s, held: 3 - s,
+                            cov: 312180 - s * 100000, own: false,
+                            tags: 97 - s * 9, cogs: 1, flag: 'home',
+                            carrier: -1 };
+      overTeams[COLOURS[s]] = { lives: 12 - s * 3, prog: 3 - s };
+      roster.push({ s: s, name: ['minigrid-missionfirst',
+                                 'minigrid-cartographer', 'Baseline (3)',
+                                 'Baseline (4)'][s],
+                    alias: ALIASES[s], team: COLOURS[s],
+                    policy: ['missionfirst', 'cartographer', 'scout',
+                             'bumper'][s],
+                    kind: s < 2 ? 'llm' : 'scripted',
+                    alive: true, lives: 1, carry: s % 2 === 0 });
+    }
     return {
-      t: tick, mt: 660, mx: 660, st: 0, sp: 1, pl: true, lp: true,
+      t: tick, mt: 720, mx: 720, st: 0, sp: 1, pl: true, lp: true,
       sk: false, ff: false, en: true, mm: -1, bs: 1, pov: -1,
       ph: tick > 600 ? 'gameover' : 'playing',
-      lob: 0, regime: 'gauntlet', game: 1, games: 1, turnTicks: 12,
-      teams: { red: { lives: 12, prog: 3, held: 3, cov: 312180, own: false,
-                      tags: 97, cogs: 1, flag: 'home', carrier: -1 } },
-      roster: [{ s: 0, name: 'minigrid-missionfirst', alias: 'Alpha',
-                 team: 'red', policy: 'missionfirst', kind: 'llm',
-                 alive: true, lives: 1, carry: true }],
+      lob: 0, regime: 'gauntlet', game: 1, games: 1, turnTicks: 24,
+      teams: teams,
+      roster: roster,
       mg: {
         index: 2, count: 5, family: 'xland', mission: MISSION,
-        turn: 7, cap: 11, solved: 3, score: 312180, credits: 12,
-        seen: 97, cells: 169, dir: 'east', carrying: 'yellow key',
-        fallbacks: 2, deaths: 1, crashes: 1, doors: 4, picked: 3,
-        productions: 2, pips: pips(), view: view
+        turn: 4, cap: 6, turnsPlayed: 14, maxTurns: 30, maxTicks: 720,
+        cells: 169, grid: 13, pips: pips(), lanes: laneStates(), pov: 0
       },
       over: tick > 600 ? {
         winner: 'red', draw: false, timeLimit: false,
-        teams: { red: { lives: 12, prog: 3 } },
-        endRule: 'gauntletComplete', reason: 'complete',
-        game: 1, games: 1, regime: 'gauntlet',
-        solved: 3, of: 5, par: 3, score: 312180
+        teams: overTeams,
+        endRule: 'allLanesComplete', reason: 'complete',
+        game: 1, games: 1, regime: 'gauntlet', par: 3, of: 5
       } : undefined,
       beats: [
-        { k: 'taskstart', t: 10, i: 0, of: 5, family: 'lavagap', mission: MISSION, cap: 11 },
-        { k: 'unlock', t: 120, color: 'yellow', key: 'yellow', x: 6, y: 3 },
-        { k: 'produce', t: 240, a: 'red key', b: 'blue ball', out: 'purple box', x: 5, y: 5 },
-        { k: 'solved', t: 300, i: 1, turns: 5, ticks: 41 },
-        { k: 'failed', t: 420, i: 2, why: 'died' },
-        { k: 'fallback', t: 500, i: 30, cause: 'timeout' },
-        { k: 'end', t: 640, solved: 3, of: 5, score: 312180,
-          reason: 'complete', endRule: 'gauntletComplete' }
+        { k: 'taskstart', t: 10, s: -1, i: 0, of: 5, family: 'lavagap',
+          mission: MISSION, cap: 6 },
+        { k: 'unlock', t: 120, s: 0, color: 'yellow', key: 'yellow', x: 6, y: 3 },
+        { k: 'produce', t: 240, s: 1, a: 'red key', b: 'blue ball',
+          out: 'purple box', x: 5, y: 5 },
+        { k: 'solved', t: 300, s: 2, i: 1, turns: 5, ticks: 41 },
+        { k: 'failed', t: 420, s: 3, i: 2, why: 'died' },
+        { k: 'fallback', t: 500, s: 1, i: 30, cause: 'transport_timeout' },
+        { k: 'end', t: 640, s: -1, solved: 3, of: 5, score: 312180,
+          reason: 'complete', endRule: 'allLanesComplete' }
       ],
+      lulls: [[120, 200], [300, 360]],
       events: []
     };
   }
 
   var EVENTS = [
-    { k: 'taskstart', t: 10, i: 0, of: 5, family: 'lavagap', mission: MISSION, cap: 11 },
-    { k: 'plan', t: 12, n: 3, verbs: 'goto toggle forward forward forward',
+    { k: 'taskstart', t: 10, s: -1, i: 0, of: 5, family: 'lavagap',
+      mission: MISSION, cap: 6 },
+    { k: 'plan', t: 12, s: 0, n: 3,
+      verbs: 'goto toggle forward forward forward forward forward right',
       truncated: true, dropped: 2 },
-    { k: 'pickup', t: 20, type: 'key', color: 'yellow', x: 2, y: 9 },
-    { k: 'unlock', t: 22, color: 'yellow', key: 'yellow', x: 6, y: 3 },
-    { k: 'produce', t: 24, a: 'red key', b: 'blue ball', out: 'purple box', x: 5, y: 5 },
-    { k: 'subgoal', t: 26, i: 0, which: 1, label: 'door_open' },
-    { k: 'lava', t: 30, x: 4, y: 4 },
-    { k: 'failed', t: 31, i: 0, why: 'died' },
-    { k: 'fallback', t: 33, i: 4, cause: 'timeout' },
-    { k: 'solved', t: 40, i: 1, turns: 5, ticks: 41 },
-    // The say is driven LAST on purpose: the shipped feed keeps only
-    // MAX_FEED = 4 rows, and the full-length assertion below reads the remark
-    // back out of the row the shipped chrome actually built.
-    { k: 'say', t: 12, text: SAY }
+    { k: 'pickup', t: 20, s: 1, type: 'key', color: 'yellow', x: 2, y: 9 },
+    { k: 'unlock', t: 22, s: 0, color: 'yellow', key: 'yellow', x: 6, y: 3 },
+    { k: 'produce', t: 24, s: 3, a: 'red key', b: 'blue ball',
+      out: 'purple box', x: 5, y: 5 },
+    { k: 'subgoal', t: 26, s: 1, i: 0, which: 1, label: 'door_open' },
+    { k: 'lava', t: 30, s: 2, i: 0, x: 4, y: 4 },
+    { k: 'failed', t: 31, s: 2, i: 0, why: 'died' },
+    { k: 'fallback', t: 33, s: 1, i: 4, cause: 'transport_timeout' },
+    { k: 'solved', t: 40, s: 0, i: 1, turns: 5, ticks: 41 },
+    { k: 'budget', t: 41, s: -1, turn: 27, remaining_s: 42 },
+    // FOUR full-cap says AT ONCE, one per lane, driven LAST on purpose: the
+    // shipped feed keeps a bounded number of rows and `say` is the one kind
+    // that may never be dropped, so all four must come back out of the DOM.
+    { k: 'say', t: 12, s: 0, text: SAY },
+    { k: 'say', t: 12, s: 1, text: SAY },
+    { k: 'say', t: 12, s: 2, text: SAY },
+    { k: 'say', t: 12, s: 3, text: SAY }
   ];
 
   // The fixture's own strings must come out of the shipped chrome UNSHORTENED.
@@ -144,6 +198,157 @@
           ' runes, longest transcribed run was ' + Array.from(longest).length +
           ' runes');
       });
+  }
+
+  // ------------------------------------------------------------------
+  //  THE LAYOUT CONTRACT (§Tests 56). Nothing this game adds may intersect
+  //  the board rect, sit inside var(--band) or be clipped by var(--topband),
+  //  and the five pip captions may not overlap each other.
+  // ------------------------------------------------------------------
+  function rectOf(node) {
+    var box = node.getBoundingClientRect();
+    return { left: box.left, top: box.top, right: box.right,
+             bottom: box.bottom, width: box.width, height: box.height };
+  }
+
+  // TOLERANCE. relayout() rounds the board height to whole pixels and
+  // reserves each band by its measured offsetHeight, so an inherited band
+  // element can share a rounded pixel row with the board edge. Two pixels
+  // absorbs that; anything genuinely sitting OVER the board is orders of
+  // magnitude past it.
+  var EDGE = 2;
+  function intersects(a, b) {
+    return a.left < b.right - EDGE && b.left < a.right - EDGE &&
+           a.top < b.bottom - EDGE && b.top < a.bottom - EDGE;
+  }
+
+  function assertLayout(win, doc, width) {
+    var board = doc.getElementById('board');
+    var stage = doc.getElementById('stage');
+    if (!board || !stage) throw new Error('the shipped page has no board');
+    var boardRect = rectOf(board);
+    var stageRect = rectOf(stage);
+    var root = doc.documentElement;
+    var band = parseFloat(
+      win.getComputedStyle(root).getPropertyValue('--band')) || 0;
+    var topBand = parseFloat(
+      win.getComputedStyle(root).getPropertyValue('--topband')) || 0;
+    var bandRect = { left: stageRect.left, right: stageRect.right,
+                     top: stageRect.bottom - band, bottom: stageRect.bottom };
+    var named = [['the mission ribbon', '#mg-ribbon'],
+                 ['the task pips', '#mg-pips'],
+                 ['the POV inset', '#fpv'],
+                 ['the feed', '#mg-feed']];
+    for (var i = 0; i < LANES; i++) {
+      named.push(['the ' + ALIASES[i] + ' plate',
+                  '.plate[data-team="' + COLOURS[i] + '"]']);
+    }
+    named.forEach(function (entry) {
+      var node = doc.querySelector(entry[1]);
+      if (!node) throw new Error(entry[0] + ' (' + entry[1] +
+        ') is not in the shipped page at ' + width + 'px');
+      if (win.getComputedStyle(node).display === 'none') return;
+      var box = rectOf(node);
+      if (box.width < 1 || box.height < 1) return;
+      if (intersects(box, boardRect)) {
+        throw new Error(entry[0] + ' overlaps the board at ' + width +
+          'px: [' + Math.round(box.left) + ',' + Math.round(box.top) + ',' +
+          Math.round(box.right) + ',' + Math.round(box.bottom) +
+          '] vs board [' + Math.round(boardRect.left) + ',' +
+          Math.round(boardRect.top) + ',' + Math.round(boardRect.right) +
+          ',' + Math.round(boardRect.bottom) + ']');
+      }
+      if (band > 0 && intersects(box, bandRect)) {
+        throw new Error(entry[0] + ' sits inside the transport band at ' +
+          width + 'px');
+      }
+      if (box.top < stageRect.top + topBand - EDGE &&
+          entry[1].indexOf('.plate') < 0) {
+        throw new Error(entry[0] + ' is clipped by the top band at ' + width +
+          'px (top ' + Math.round(box.top) + ' < ' +
+          Math.round(stageRect.top + topBand) + ')');
+      }
+    });
+    // the five pip captions do not overlap each other
+    var caps = doc.querySelectorAll('#mg-pips .mg-fam');
+    for (var a = 0; a < caps.length; a++) {
+      for (var b = a + 1; b < caps.length; b++) {
+        if (intersects(rectOf(caps[a]), rectOf(caps[b]))) {
+          throw new Error('the pip captions overlap at ' + width + 'px');
+        }
+      }
+    }
+    if (caps.length !== 5) {
+      throw new Error('the pip stack drew ' + caps.length +
+        ' captions, not five, at ' + width + 'px');
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  THE SEEK CONTRACT (§Tests 52). ONE axis: a click at fraction f seeks to
+  //  first + round(f * span), so f = 1.0 lands on the LAST tick — which is
+  //  what v1 got wrong (a click at 100 % landed at tick 158 of 315).
+  // ------------------------------------------------------------------
+  function assertSeek(win, ctx, state, width) {
+    if (!win.MinigridChrome.seekFraction) {
+      throw new Error('the shipped chrome exposes no seekFraction');
+    }
+    var axis = win.MinigridChrome.scrubAxis(state);
+    if (axis.span !== state.mx - state.st) {
+      throw new Error('scrubAxis span is ' + axis.span + ', not ' +
+        (state.mx - state.st));
+    }
+    var sent = [];
+    var realSend = ctx.send;
+    ctx.send = function (cmd) { sent.push(cmd); };
+    try {
+      [0, 0.25, 0.5, 0.75, 1.0].forEach(function (f) {
+        sent.length = 0;
+        win.MinigridChrome.seekFraction(f);
+        var want = 's:' + (axis.first + Math.round(f * axis.span));
+        if (sent.length !== 1 || sent[0] !== want) {
+          throw new Error('a click at ' + (f * 100) + '% sent ' +
+            JSON.stringify(sent) + ', wanted ' + want + ' at ' + width + 'px');
+        }
+      });
+    } finally {
+      ctx.send = realSend;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  THE FEED (§Tests 54). Every fed kind draws one row, `say` is never
+  //  dropped, rows carry their lane colour, and NO row carries a real policy
+  //  name — the feed speaks in aliases only.
+  // ------------------------------------------------------------------
+  function assertFeed(doc, width) {
+    var rows = doc.querySelectorAll('#killfeed .feed-row');
+    if (!rows.length) {
+      throw new Error('the shipped feed drew no rows at ' + width + 'px');
+    }
+    var says = 0;
+    var laneTinted = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var text = rows[i].textContent || '';
+      ['minigrid-missionfirst', 'minigrid-cartographer', 'missionfirst',
+       'cartographer', 'Baseline ('].forEach(function (name) {
+        if (text.indexOf(name) >= 0) {
+          throw new Error('a feed row carries the REAL policy name ' + name +
+            ' at ' + width + 'px: ' + text.slice(0, 80));
+        }
+      });
+      if (rows[i].querySelector('.mg-say') && text.indexOf('PHASE') < 0) says++;
+      for (var q = 0; q < LANES; q++) {
+        if (rows[i].classList.contains('lane' + q)) laneTinted++;
+      }
+    }
+    if (says < 1) {
+      throw new Error('no `say` row survived the feed queue at ' + width +
+        'px — say rows are never dropped');
+    }
+    if (laneTinted < 1) {
+      throw new Error('no feed row carried a lane colour at ' + width + 'px');
+    }
   }
 
   function fail(message) {
@@ -193,6 +398,10 @@
         var text = (node.textContent || '').trim();
         if (!text) continue;
         var box = node.getBoundingClientRect();
+        // A node the shipped layout HID draws nothing, so it must not be
+        // transcribed: measuring it would put a string at the canvas origin
+        // that the page never painted.
+        if (box.width < 1 || box.height < 1) continue;
         var style = doc.defaultView.getComputedStyle(node);
         var size = parseFloat(style.fontSize) || 12;
         ctx.font = size + 'px ' + (style.fontFamily || 'sans-serif');
@@ -208,6 +417,13 @@
                                                       canvas.width - x)))
           : [text];
         var lineHeight = size * 1.3;
+        // The node's OWN box is the room the shipped layout gave this run, so
+        // never transcribe more lines than it holds: the page clips its feed
+        // column, and re-wrapping at a slightly different font must not
+        // invent overflow the browser never drew.
+        var maxLines = Math.max(1,
+          Math.floor(((box.height || lineHeight) + 1) / lineHeight));
+        if (lines.length > maxLines) lines = lines.slice(0, maxLines);
         var block = lineHeight * lines.length;
         var y = Math.max(0, Math.min(canvas.height - block - 2, box.top));
         for (var line = 0; line < lines.length; line++) {
@@ -223,8 +439,14 @@
   var frame = document.getElementById('frame');
   var canvas = document.getElementById('tx');
   var deadline = Date.now() + 60000;
+  // ONE run, ever. Both the iframe's `load` and the belt-and-braces timer call
+  // drive(), and a second run entering while the first is mid-loop resizes the
+  // iframe under it — every measured box then reads 0 and every transcribed
+  // run lands at the canvas origin, which looks exactly like a layout defect.
+  var driving = false;
 
   function drive() {
+    if (driving) return;
     var win, doc;
     try {
       win = frame.contentWindow;
@@ -241,61 +463,101 @@
       setTimeout(drive, 200);
       return;
     }
+    driving = true;
     var total = 0;
+
+    // ONE WIDTH PER TURN OF THE EVENT LOOP. Resizing the iframe does not
+    // re-lay-out its document synchronously: measuring straight after the
+    // assignment reads every box as 0, which silently turns every geometry
+    // assertion into a comparison of zeros (and transcribes every string at
+    // the canvas origin). Let the iframe settle first, then measure.
+    function runWidth(index) {
+      if (index >= WIDTHS.length) {
+        if (total === 0) {
+          fail('the shipped chrome produced no text to measure');
+          return;
+        }
+        document.getElementById('note').textContent =
+          'minigrid renderer fixture — ' + total +
+          ' shipped text runs measured at ' + WIDTHS.join('/') + ' px';
+        document.documentElement.setAttribute('data-replay-loaded', 'true');
+        return;
+      }
+      var width = WIDTHS[index];
+      frame.width = String(width);
+      frame.height = String(Math.round(width * 0.5625));
+      canvas.width = width;
+      canvas.height = Math.round(width * 0.5625);
+      if (typeof win.dispatchEvent === 'function') {
+        win.dispatchEvent(new win.Event('resize'));
+      }
+      setTimeout(function () {
+        try {
+          measureWidth(width);
+        } catch (e) {
+          fail(e.message);
+          return;
+        }
+        runWidth(index + 1);
+      }, 300);
+    }
+
+    function measureWidth(width) {
+      // The shipped page publishes its own chrome context as MG_CTX, so
+      // this fixture drives the REAL chrome through the REAL context.
+      var ctx = win.MG_CTX;
+      if (!ctx) throw new Error('the shipped page published no chrome context');
+      [400, 640].forEach(function (tick) {
+        var state = worstState(tick);
+        // The WHOLE shipped frame path, in production order: the inherited
+        // scorebug/clock/transport render, then the events, then the game
+        // block's own frame. Driving the block alone would leave the four
+        // plates unbuilt and the layout contract untested.
+        if (ctx.onFrame) {
+          try { ctx.onFrame(JSON.stringify(state)); }
+          catch (e) { throw new Error('onFrame: ' + e.message); }
+        }
+        EVENTS.forEach(function (event) {
+          try { win.MinigridChrome.event(event, state, ctx); }
+          catch (e) { throw new Error('event ' + event.k + ': ' + e.message); }
+        });
+        try { win.MinigridChrome.frame(state, ctx, false); }
+        catch (e) { throw new Error('frame: ' + e.message); }
+      });
+      // The 7x7 agent-view inset is a REQUIRED spectator readout, and the
+      // inherited renderFpv() reveals #fpv only for a paintball POV seat — a
+      // key this fork never sends, which left the panel computed every frame
+      // and never displayed (review r1, N1). Probe the SHIPPED page's computed
+      // style, at every width, so a regression back to display:none is red
+      // here instead of invisible.
+      var fpv = doc.getElementById('fpv');
+      if (!fpv) throw new Error('the shipped page has no #fpv panel');
+      if (win.getComputedStyle(fpv).display === 'none') {
+        throw new Error('#fpv (the agent view 7x7 inset) is display:none at ' +
+                        width + 'px after a frame that carries a view');
+      }
+      // The POV badge comes BACK with four lanes: there is something to
+      // select now.
+      var badge = doc.getElementById('povBadge');
+      if (!badge) throw new Error('the shipped page has no #povBadge');
+      assertLayout(win, doc, width);
+      assertSeek(win, ctx, worstState(400), width);
+      assertFeed(doc, width);
+      var runs = [];
+      total += transcribe(doc, canvas, runs);
+      assertFullLength(runs, width);
+    }
+
     try {
       if (Array.from(SAY).length !== 140) {
         throw new Error('the fixture built a ' + Array.from(SAY).length +
                         '-rune say; MaxSayRunes is 140');
       }
-      WIDTHS.forEach(function (width) {
-        frame.width = String(width);
-        frame.height = String(Math.round(width * 0.5625));
-        canvas.width = width;
-        canvas.height = Math.round(width * 0.5625);
-        if (typeof win.dispatchEvent === 'function') {
-          win.dispatchEvent(new win.Event('resize'));
-        }
-        // The shipped page publishes its own chrome context as MG_CTX, so
-        // this fixture drives the REAL chrome through the REAL context.
-        var ctx = win.MG_CTX;
-        if (!ctx) throw new Error('the shipped page published no chrome context');
-        [400, 640].forEach(function (tick) {
-          var state = worstState(tick);
-          EVENTS.forEach(function (event) {
-            try { win.MinigridChrome.event(event, state, ctx); }
-            catch (e) { throw new Error('event ' + event.k + ': ' + e.message); }
-          });
-          try { win.MinigridChrome.frame(state, ctx, false); }
-          catch (e) { throw new Error('frame: ' + e.message); }
-        });
-        // The 7x7 agent-view inset is a REQUIRED spectator readout, and the
-        // inherited renderFpv() reveals #fpv only for a paintball POV seat —
-        // a key this fork never sends, which left the panel computed every
-        // frame and never displayed (review r1, N1). Probe the SHIPPED page's
-        // computed style, at every width, so a regression back to
-        // display:none is red here instead of invisible.
-        var fpv = doc.getElementById('fpv');
-        if (!fpv) throw new Error('the shipped page has no #fpv panel');
-        if (win.getComputedStyle(fpv).display === 'none') {
-          throw new Error('#fpv (the agent view 7x7 inset) is display:none at ' +
-                          width + 'px after a frame that carries a view');
-        }
-        var runs = [];
-        total += transcribe(doc, canvas, runs);
-        assertFullLength(runs, width);
-      });
     } catch (e) {
       fail(e.message);
       return;
     }
-    if (total === 0) {
-      fail('the shipped chrome produced no text to measure');
-      return;
-    }
-    document.getElementById('note').textContent =
-      'minigrid renderer fixture — ' + total + ' shipped text runs measured at ' +
-      WIDTHS.join('/') + ' px';
-    document.documentElement.setAttribute('data-replay-loaded', 'true');
+    runWidth(0);
   }
 
   frame.addEventListener('load', function () { setTimeout(drive, 400); });

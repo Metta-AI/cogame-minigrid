@@ -3,9 +3,9 @@
 ## the mandatory trailing summary row kept.
 ##
 ## `Primitive` is the per-tick row that makes this stream a full action trace
-## for `cogamer-rl` — 660 rows an episode, which is what the idea's "natural
-## home for LLM-RL experiments" needs and what the replay deliberately does
-## not carry.
+## for `cogamer-rl` — up to 720 rows PER LANE an episode, which is what the
+## idea's "natural home for LLM-RL experiments" needs and what the replay
+## deliberately does not carry. Every row names its `slot`.
 
 import std/[json, strutils]
 import sim
@@ -48,18 +48,21 @@ proc analysisKind*(kind: EventKind): tuple[ok: bool, kind: SimEventKind] =
   of evFailed: (true, Failed)
   else: (false, TaskStart)
 
-proc primitiveRow*(sim: SimServer, primitive: Primitive): string =
-  ## The per-tick action trace row.
+proc primitiveRow*(sim: SimServer, slot: int,
+                   primitive: Primitive): string =
+  ## The per-tick action trace row for ONE lane.
+  let lane = sim.lanes[clamp(slot, 0, sim.lanes.high)]
   $(%*{
     "type": $PrimitiveStep,
     "tick": sim.tickCount,
+    "slot": slot,
     "task": sim.taskIndex,
-    "taskTick": sim.taskTick,
+    "taskTick": lane.taskTick,
     "do": $primitive,
-    "x": sim.agent.x,
-    "y": sim.agent.y,
-    "dir": $sim.agent.dir,
-    "carrying": sim.agent.carrying.describe()
+    "x": lane.agent.x,
+    "y": lane.agent.y,
+    "dir": $lane.agent.dir,
+    "carrying": lane.agent.carrying.describe()
   })
 
 proc eventRow*(sim: SimServer, event: SimEvent): string =
@@ -69,6 +72,7 @@ proc eventRow*(sim: SimServer, event: SimEvent): string =
   var node = %*{
     "type": $mapped.kind,
     "tick": event.tick,
+    "slot": event.slot,
     "task": sim.taskIndex,
     "i": event.i,
     "x": event.x,

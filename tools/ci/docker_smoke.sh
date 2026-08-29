@@ -2,7 +2,7 @@
 # Raw-Docker one-episode smoke for a Coworld game repo.
 #
 # Goes to:  tools/ci/docker_smoke.sh  in the coworld repo (chmod +x).
-# Substitute: minigrid, coworld-minigrid, 1.
+# Substitute: minigrid, coworld-minigrid, 4.
 #
 #   tools/ci/docker_smoke.sh [image]
 #
@@ -22,7 +22,7 @@
 #   SMOKE_GAME_BIN             game entrypoint                  (/bin/minigrid)
 #   SMOKE_PLAYER_BIN           player entrypoint                (/bin/minigrid-player)
 #   SMOKE_MANIFEST             manifest template path           (coworld_manifest_template.json)
-#   SMOKE_SEATS                seat-count CROSS-CHECK           (1)
+#   SMOKE_SEATS                seat-count CROSS-CHECK           (4)
 #                              must agree with the manifest fixture; it is
 #                              not a fallback -- a missing or inconsistent
 #                              num_agents is a hard failure
@@ -51,7 +51,7 @@ slug="${SMOKE_SLUG:-minigrid}"
 game_bin="${SMOKE_GAME_BIN:-/bin/${slug}}"
 player_bin="${SMOKE_PLAYER_BIN:-/bin/${slug}-player}"
 manifest="${SMOKE_MANIFEST:-${repo_dir}/coworld_manifest_template.json}"
-seats_expected="${SMOKE_SEATS:-1}"
+seats_expected="${SMOKE_SEATS:-4}"
 port="${SMOKE_PORT:-8080}"
 timeout_s="${SMOKE_TIMEOUT:-900}"
 require_replay_json="${SMOKE_REQUIRE_REPLAY_JSON:-1}"

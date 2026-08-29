@@ -16,37 +16,45 @@ const SweepSeeds = 40
 
 proc playOne(config: GameConfig, kind: Baseline,
              params: BaselineParams): int =
-  var sim = initSimServer(config)
+  ## ONE lane is what the sweep ranks: the lanes are isolated and identical by
+  ## construction, so four of them would rank the same cell four times.
+  var one = config
+  one.numAgents = 1
+  one.minPlayers = 1
+  var sim = initSimServer(one)
   sim.phase = Playing
-  sim.startTask(0)
   var turns = 0
   while sim.phase == Playing and turns < 400:
     if sim.waitingForPlan():
-      sim.advanceTasks()
+      sim.beginTurn()
       if sim.phase != Playing:
         break
-      let plan = scriptedPlan(sim, kind, params)
-      let expansion = expandPlan(sim.knownMap, sim.agent.x, sim.agent.y,
-        sim.agent.dir, plan.actions, sim.config.macroPrimitiveCap,
-        sim.config.turnTicks)
-      sim.installPlan(expansion.primitives, expansion.truncated,
-        plan.dropped + plan.overCap, expansion.unreachable)
       inc turns
+      for slot in 0 ..< sim.lanes.len:
+        if sim.lanes[slot].laneResolved():
+          continue
+        let plan = scriptedPlan(sim.lanes[slot], sim.config, kind, params)
+        let expansion = expandPlan(sim.lanes[slot].knownMap,
+          sim.lanes[slot].agent.x, sim.lanes[slot].agent.y,
+          sim.lanes[slot].agent.dir, plan.actions,
+          sim.config.macroPrimitiveCap, sim.config.turnTicks)
+        sim.installLanePlan(slot, expansion.primitives, expansion.truncated,
+          plan.dropped + plan.overCap, expansion.unreachable)
     sim.stepTick()
     sim.pending.setLen(0)
   if sim.phase == Playing:
-    sim.finish(erComplete, edGauntletComplete)
-  sim.score()
+    sim.finish(erComplete, edAllLanesComplete)
+  sim.score(0)
 
 proc sweep(): JsonNode =
   var grid = newJArray()
   var best: JsonNode = nil
   var bestScore = -1
   for weight in [1, 2, 3, 4, 6, 8]:
-    ## `spinTurns` is DESIGN-PINNED at the config's 12, not swept: it only
+    ## `spinTurns` is DESIGN-PINNED at the config's 24, not swept: it only
     ## fires when the whole reachable region is mapped and the target is not
     ## in it, which is a terminal state a sweep cannot rank.
-    for spin in [12]:
+    for spin in [24]:
       for byDistance in [true, false]:
         let params = BaselineParams(frontierAdjacencyWeight: weight,
                                     spinTurns: spin,

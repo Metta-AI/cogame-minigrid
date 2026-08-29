@@ -19,7 +19,7 @@ const
   ReplayKeyframeTicks* = 60
   ReplayEndHoldSeconds* = 10
   LullLeadTicks* = 2 * ReplayFps
-  MinLullTicks* = 6 * ReplayFps
+  MinLullTicks* = 30
   LullSpeedBoost* = 8
   MaxLullTicksPerFrame* = 64
   SeekTicksPerFrame* = 240
@@ -103,14 +103,19 @@ proc pushControlEvents*(sim: var SimServer, record: JsonNode) =
     for item in record{"actions"}:
       verbs.add(item{"do"}.getStr())
     sim.pending.add(SimEvent(kind: evPlan, tick: sim.tickCount,
-      i: record{"turn"}.getInt(), a: verbs.join(" "),
+      slot: record{"slot"}.getInt(), i: record{"turn"}.getInt(),
+      a: verbs.join(" "),
       n: (if record{"truncated"}.getBool(): 1 else: 0),
       m: record{"dropped"}.getInt()))
   of "fallback":
-    sim.pending.add(SimEvent(kind: evFallback, tick: sim.tickCount,
-      i: record{"turn"}.getInt(), a: record{"cause"}.getStr()))
+    ## ONLY the second attempt is a broadcast event: attempt 1 "will retry"
+    ## is a log line, not news for the feed.
+    if record{"attempt"}.getInt() >= 2:
+      sim.pending.add(SimEvent(kind: evFallback, tick: sim.tickCount,
+        slot: record{"slot"}.getInt(), i: record{"turn"}.getInt(),
+        a: record{"cause"}.getStr()))
   of "budget_guard":
-    sim.pending.add(SimEvent(kind: evBudget, tick: sim.tickCount,
+    sim.pending.add(SimEvent(kind: evBudget, tick: sim.tickCount, slot: -1,
       i: record{"turn"}.getInt(), n: record{"remaining_s"}.getInt()))
   else:
     discard
@@ -141,24 +146,33 @@ proc applyControlRecord*(sim: var SimServer, message: string) =
   sim.pushFeedDirective(message)
   case record{"k"}.getStr()
   of "directive":
-    ## Turn step 1 runs HERE on playback, exactly where the live loop runs it
-    ## (server.nim's turn boundary calls `advanceTasks` immediately before
-    ## installing the plan). Leaving it to `stepTick`'s empty-queue guard
-    ## would skip it whenever this record has already refilled the queue, and
-    ## the next task would never start — a hash divergence at the first task
-    ## boundary.
-    sim.advanceTasks()
+    ## THE TURN BOUNDARY RUNS HERE on playback, exactly where the live loop
+    ## runs it (server.nim calls `beginTurn` immediately before installing the
+    ## turn's plans). A turn writes ONE record per active seat, all carrying
+    ## the same `turn` number, so the boundary is opened by the FIRST of them
+    ## and the rest only install their own lane's queue.
+    let turn = record{"turn"}.getInt()
+    if turn > sim.turnsPlayed:
+      sim.beginTurn()
+    let slot = record{"slot"}.getInt()
     let primitives = parseRecordedActions(record{"executed"})
-    sim.notes = ""
-    sim.installPlan(primitives, record{"truncated"}.getBool(),
-      record{"dropped"}.getInt(), record{"unreachable"}.getInt())
-    case record{"source"}.getStr()
-    of "llm": inc sim.llmTurns
-    of "fallback": inc sim.fallbackTurns
-    else: discard
+    if slot >= 0 and slot < sim.lanes.len:
+      sim.lanes[slot].notes = ""
+      sim.installLanePlan(slot, primitives, record{"truncated"}.getBool(),
+        record{"dropped"}.getInt(), record{"unreachable"}.getInt())
+      case record{"source"}.getStr()
+      of "llm": inc sim.lanes[slot].llmTurns
+      of "fallback":
+        inc sim.lanes[slot].fallbackTurns
+        for cause in FallbackCause:
+          if $cause == record{"cause"}.getStr():
+            inc sim.lanes[slot].fallbackCauses[cause]
+            break
+      else: discard
     let say = record{"say"}.getStr()
     if say.len > 0:
-      sim.pending.add(SimEvent(kind: evSay, tick: sim.tickCount, a: say))
+      sim.pending.add(SimEvent(kind: evSay, tick: sim.tickCount, slot: slot,
+        a: say))
     sim.pushControlEvents(record)
   of "register":
     let slot = record{"slot"}.getInt()
@@ -316,13 +330,14 @@ proc buildLullSpans*(beatTicks: seq[int],
       prevBeat = nextBeat
 
 proc scanLead(sim: SimServer): seq[int] =
-  ## The cumulative subgoal credits (0..15) — the series the progress
-  ## sparkline plots, with the task spans shaded behind it.
-  var credits = sim.progressTotal()
-  if sim.taskOutcome == toPending:
-    for earned in sim.subgoals:
-      if earned: inc credits
-  @[credits]
+  ## FOUR cumulative subgoal-credit curves (0..15), one per lane — the series
+  ## the momentum panel plots, with the phase spans shaded behind it.
+  for slot in 0 ..< sim.lanes.len:
+    var credits = sim.lanes[slot].progressTotal()
+    if sim.lanes[slot].taskOutcome == toPending:
+      for earned in sim.lanes[slot].subgoals:
+        if earned: inc credits
+    result.add(credits)
 
 proc scanComplete*(replay: ReplayPlayer): bool = replay.scanDone
 
@@ -388,11 +403,14 @@ proc advanceReplayScan*(replay: var ReplayPlayer, maxTicks: int) =
           break
       if kind.isBeat():
         replay.beatEvents.add(event)
-      ## A lull is 30 consecutive ticks with no interaction event and no
-      ## change in the agent's cell.
+      ## A lull is 30 consecutive ticks with no event in ANY lane and no
+      ## lane's agent changing cell.
       if kind notin {evTurn, evPlan, evSay}:
         beatHere = true
-    let cell = idx(scan.sim.agent.x, scan.sim.agent.y)
+    var cell = 0
+    for slot in 0 ..< scan.sim.lanes.len:
+      cell = cell * GridCells +
+        idx(scan.sim.lanes[slot].agent.x, scan.sim.lanes[slot].agent.y)
     if cell != scan.lastCell:
       scan.lastCell = cell
       beatHere = true

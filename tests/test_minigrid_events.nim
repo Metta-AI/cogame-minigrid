@@ -22,7 +22,8 @@ suite "minigrid events":
     for kind in declared:
       check kind in DeclaredKinds
 
-    ## Every kind the appended game block routes is in that set.
+    ## Every kind the appended game block routes is in that set, and the
+    ## block routes NOTHING that is not.
     let page = readRepo("client/replay_broadcast.html")
     let split = page.find("MINIGRID additions to the inherited coworld-ctf chrome")
     let block0 = page[split .. ^1]
@@ -49,21 +50,22 @@ suite "minigrid events":
     var config = testConfig("xland", 11)
     var sim = initSimServer(config)
     sim.phase = Playing
-    sim.startTask(0)
     var tracker = initBroadcastTracker()
     var seen: seq[string]
     var turns = 0
     while sim.phase == Playing and turns < 400:
       if sim.waitingForPlan():
-        sim.advanceTasks()
+        sim.beginTurn()
         if sim.phase != Playing: break
-        let plan = scriptedPlan(sim, blScout)
-        let expansion = expandPlan(sim.knownMap, sim.agent.x, sim.agent.y,
-          sim.agent.dir, plan.actions, config.macroPrimitiveCap,
-          config.turnTicks)
-        sim.installPlan(expansion.primitives, expansion.truncated, 0,
-          expansion.unreachable)
         inc turns
+        for slot in sim.activeSeats():
+          let plan = scriptedPlan(sim.lanes[slot], sim.config, blScout)
+          let expansion = expandPlan(sim.lanes[slot].knownMap,
+            sim.lanes[slot].agent.x, sim.lanes[slot].agent.y,
+            sim.lanes[slot].agent.dir, plan.actions,
+            config.macroPrimitiveCap, config.turnTicks)
+          sim.installLanePlan(slot, expansion.primitives, expansion.truncated,
+            0, expansion.unreachable)
       sim.stepTick()
       let events = newJArray()
       sim.stepEvents(tracker, events)
@@ -71,9 +73,16 @@ suite "minigrid events":
         let kind = event["k"].getStr()
         check kind in DeclaredKinds
         check event.hasKey("t")
+        ## EVERY event names its lane: a lane-specific kind carries its seat,
+        ## an episode-wide kind carries -1.
+        check event.hasKey("s")
+        if kind in ["taskstart", "turn", "budget", "end"]:
+          check event["s"].getInt() == -1
+        else:
+          check event["s"].getInt() in 0 ..< LaneCount
         if kind notin seen: seen.add(kind)
     if sim.phase == Playing:
-      sim.finish(erComplete, edGauntletComplete)
+      sim.finish(erComplete, edAllLanesComplete)
     let tail = newJArray()
     sim.stepEvents(tracker, tail)
     for event in tail:
@@ -85,11 +94,11 @@ suite "minigrid events":
   test "the tier-2 analysis stream keeps its summary row":
     var sim = initSimServer(testConfig())
     sim.phase = Playing
-    sim.startTask(0)
+    sim.startPhase(0)
     var rows: seq[string]
-    rows.add(sim.primitiveRow(pForward))
-    rows.add(sim.eventRow(SimEvent(kind: evPickup, tick: 3, x: 2, y: 9,
-      a: "key", b: "yellow")))
+    rows.add(sim.primitiveRow(2, pForward))
+    rows.add(sim.eventRow(SimEvent(kind: evPickup, tick: 3, slot: 1, x: 2,
+      y: 9, a: "key", b: "yellow")))
     rows.add(sim.summaryRow(rows.len))
     let stream = eventsJsonl(rows)
     var count = 0
@@ -103,7 +112,10 @@ suite "minigrid events":
     check summary["gameVersion"].getStr() == GameVersion
     check summary.hasKey("ticks")
     check summary.hasKey("events")
-    ## `Primitive` is the per-tick row that makes this a full action trace.
+    ## `Primitive` is the per-tick row that makes this a full action trace,
+    ## and every row names its lane.
     check parseJson(rows[0])["type"].getStr() == "Primitive"
+    check parseJson(rows[0])["slot"].getInt() == 2
+    check parseJson(rows[1])["slot"].getInt() == 1
     ## An undeclared kind produces no row rather than an undeclared one.
     check sim.eventRow(SimEvent(kind: evSay, a: "hi")) == ""

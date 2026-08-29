@@ -1,9 +1,17 @@
-## The simulation: the step loop of the design note exactly as numbered,
-## `gameHash`, task and episode end evaluation, scoring, and the seat's
-## observation builder.
+## The simulation: FOUR ISOLATED LANES of the step loop of the design note,
+## `gameHash`, phase and episode end evaluation, per-lane scoring, and each
+## seat's lane-local observation builder.
 ##
-## THE WHOLE PHYSICS OF THE GAME IS `stepTick` AND NOTHING ELSE MUTATES THE
-## WORLD. All arithmetic is integer only — cell coordinates, directions, tick
+## THE WHOLE PHYSICS OF THE GAME IS `stepLane` AND NOTHING ELSE MUTATES A
+## LANE. `stepLane` is a PURE FUNCTION OF ONE LANE'S OWN STATE AND THAT LANE'S
+## OWN PRIMITIVE: it takes no `SimServer`, reads no other lane and writes no
+## other lane, which is the whole of the isolation guarantee
+## (`tests/test_minigrid_isolation.nim`). Every generator draw is
+## `mix64(seed, taskIndex, salt)` and THE LANE INDEX IS DELIBERATELY NOT AN
+## INPUT, so all four lanes get byte-identical layouts, missions and rule
+## tables — same challenge, so `scores[i]` compare directly.
+##
+## All arithmetic is integer only — cell coordinates, directions, tick
 ## counters, BFS distances, subgoal counters, scores. There is no floating
 ## point anywhere in this module, which is what makes the native <-> wasm hash
 ## chain exact by construction (and `tests/test_minigrid_sim.nim` greps for
@@ -15,7 +23,9 @@ import sim_types, sim_config, grid, tasks, agent, xland
 type
   EventKind* = enum
     ## The closed enum of derived broadcast events. `tests/test_minigrid_events.nim`
-    ## asserts the emitted set equals exactly this list.
+    ## asserts the emitted set equals exactly this list. Every LANE-SPECIFIC
+    ## kind carries a `slot`; `taskstart`, `turn`, `budget` and `end` are
+    ## episode-wide and carry none.
     evTaskStart = "taskstart"
     evTurn = "turn"
     evPlan = "plan"
@@ -39,6 +49,8 @@ type
     ## FLATTY WIRE TYPE — field order is sacred.
     kind*: EventKind
     tick*: int
+    slot*: int
+      ## the lane this event happened in, or -1 for an episode-wide kind.
     i*, x*, y*, n*, m*: int
     a*, b*, c*: string
 
@@ -66,6 +78,47 @@ type
     progress*: int
     cellsSeen*: int
 
+  Lane* = object
+    ## FLATTY WIRE TYPE — field order is sacred. ONE SEAT'S WHOLE PRIVATE
+    ## WORLD. Nothing outside this object is readable by `stepLane`, and
+    ## nothing in it is readable by another lane.
+    taskIndex*: int
+      ## the phase this lane is playing. Phases are synchronised, so it always
+      ## equals `sim.taskIndex` — kept HERE so `stepLane` needs no server.
+    task*: Task
+    knownMap*: KnownMap
+    agent*: Agent
+    obstacles*: seq[Obstacle]
+    productions*: seq[Production]
+    subgoals*: array[3, bool]
+    taskTick*: int
+    taskTurns*: int
+    taskStarted*: bool
+    taskOutcome*: TaskOutcome
+    records*: seq[TaskRecord]
+
+    queue*: seq[Primitive]
+    executed*: seq[Primitive]
+    planTruncated*: bool
+    lastDropped*: int
+    lastUnreachable*: int
+    notes*: string
+
+    laneTicks*: int
+    deaths*: int
+    crashes*: int
+    doorsOpened*: int
+    objectsPickedUp*: int
+    productionsFired*: int
+    primitivesExecuted*: int
+    actionsDropped*: int
+    macrosUnreachable*: int
+    repliesRepaired*: int
+    llmTurns*: int
+    fallbackTurns*: int
+    fallbackCauses*: array[FallbackCause, int]
+    endRule*: LaneEndRule
+
   SimServer* = object
     ## FLATTY WIRE TYPE — field order is sacred. Keyframes flatty this whole
     ## object, so a reordered field silently re-interprets every recorded
@@ -81,37 +134,14 @@ type
 
     ladder*: seq[TaskFamily]
     taskIndex*: int
-    task*: Task
-    knownMap*: KnownMap
-    agent*: Agent
-    obstacles*: seq[Obstacle]
-    productions*: seq[Production]
-    subgoals*: array[3, bool]
-    taskTick*: int
-    taskTurns*: int
-    taskStarted*: bool
-    taskOutcome*: TaskOutcome
-    records*: seq[TaskRecord]
-
-    queue*: seq[Primitive]
-    executed*: seq[Primitive]
+      ## THE SHARED PHASE INDEX. Phase boundaries are synchronised: every
+      ## lane starts phase k on the same turn, and a lane that resolves early
+      ## idles until the boundary.
+    phaseStarted*: bool
     turnsPlayed*: int
-    planTruncated*: bool
-    lastDropped*: int
-    lastUnreachable*: int
-    notes*: string
+    turnTicksLeft*: int
+    lanes*: seq[Lane]
 
-    deaths*: int
-    crashes*: int
-    doorsOpened*: int
-    objectsPickedUp*: int
-    productionsFired*: int
-    primitivesExecuted*: int
-    actionsDropped*: int
-    macrosUnreachable*: int
-    repliesRepaired*: int
-    llmTurns*: int
-    fallbackTurns*: int
     deadSeats*: seq[bool]
     policyKinds*: seq[string]
 
@@ -124,115 +154,329 @@ type
 
   SimError* = object of CatchableError
 
-const
-  IdentityNames* = ["alpha", "bravo", "charlie", "delta"]
-    ## Inherited from the starter's roster: the in-game aliases. With one seat
-    ## only `Alpha` is ever used, and it is the ONLY name that appears in an
-    ## observation, in a prompt, in a `say`, or on the board.
-
-proc seatAlias*(slot: int): string =
-  ## The anonymous cog alias, title-cased. The seat's REAL policy name lives
-  ## only in `results.names`, in the replay's join record, and spectator-side
-  ## in the viewer.
-  let base = IdentityNames[clamp(slot, 0, IdentityNames.high)]
-  base[0].toUpperAscii() & base[1 .. ^1]
-
 proc seatCount*(sim: SimServer): int = max(1, sim.config.numAgents)
+
+proc laneCount*(sim: SimServer): int = sim.lanes.len
 
 proc emit(sim: var SimServer, event: SimEvent) =
   var copy = event
   copy.tick = sim.tickCount
   sim.pending.add(copy)
 
+proc emitLane(sim: var SimServer, slot: int, event: SimEvent) =
+  var copy = event
+  copy.tick = sim.tickCount
+  copy.slot = slot
+  sim.pending.add(copy)
+
 # ---------------------------------------------------------------------------
-#  Task lifecycle
+#  Lane predicates — every one of them reads ONE lane and nothing else
+# ---------------------------------------------------------------------------
+
+proc facingObject(lane: Lane, obj: ObjectRef): bool =
+  let front = lane.agent.ahead()
+  lane.task.grid.objectAt(front.x, front.y) == obj
+
+proc adjacentTo(lane: Lane, obj: ObjectRef): bool =
+  for dir in Dirs:
+    let
+      nx = lane.agent.x + DirDx[dir]
+      ny = lane.agent.y + DirDy[dir]
+    if lane.task.grid.objectAt(nx, ny) == obj:
+      return true
+  false
+
+proc findObject*(g: Grid, obj: ObjectRef): tuple[found: bool, x, y: int] =
+  for y in 0 ..< GridSize:
+    for x in 0 ..< GridSize:
+      if g.objectAt(x, y) == obj:
+        return (true, x, y)
+  (false, 0, 0)
+
+proc onGoal*(lane: Lane): bool =
+  lane.task.grid.at(lane.agent.x, lane.agent.y).kind == ckGoal
+
+proc goalDistance(lane: Lane): int =
+  for y in 0 ..< GridSize:
+    for x in 0 ..< GridSize:
+      if lane.task.grid.at(x, y).kind == ckGoal:
+        return manhattan(lane.agent.x, lane.agent.y, x, y)
+  99
+
+proc succeeded*(lane: Lane): bool =
+  ## The family's success predicate, against ONE lane.
+  case lane.task.family
+  of tfLavagap, tfDoorkey, tfMultiroom, tfDynamic:
+    lane.onGoal()
+  of tfKeycorridor:
+    lane.agent.carrying == lane.task.goalObject
+  of tfBabyai:
+    case lane.task.instructionKind
+    of 0:
+      lane.facingObject(lane.task.targetA)
+    of 1:
+      lane.agent.carrying == lane.task.targetA
+    else:
+      ## "put X next to Y": the two objects sit on 4-adjacent cells and
+      ## NEITHER is carried.
+      if lane.agent.carrying == lane.task.targetA or
+          lane.agent.carrying == lane.task.targetB:
+        false
+      else:
+        let a = lane.task.grid.findObject(lane.task.targetA)
+        let b = lane.task.grid.findObject(lane.task.targetB)
+        a.found and b.found and manhattan(a.x, a.y, b.x, b.y) == 1
+  of tfXland:
+    lane.task.grid.objectExists(lane.task.goalObject) or
+      lane.agent.carrying == lane.task.goalObject
+
+proc subgoalHolds(lane: Lane, which: int): bool =
+  case lane.task.family
+  of tfLavagap:
+    case which
+    of 0: lane.knownMap.known(lane.task.gapX, lane.task.gapY).seen
+    of 1: lane.agent.x > lane.task.gapX
+    else: lane.succeeded()
+  of tfDoorkey:
+    case which
+    of 0: lane.agent.carrying.kind == ckKey and
+          lane.agent.carrying.colour == lane.task.keyColour
+    of 1: lane.task.grid.at(lane.task.doorX, lane.task.doorY).door == dsOpen
+    else: lane.succeeded()
+  of tfMultiroom:
+    case which
+    of 0: roomOf(lane.agent.x, lane.agent.y) == 1
+    of 1: roomOf(lane.agent.x, lane.agent.y) == 2
+    else: lane.succeeded()
+  of tfKeycorridor:
+    case which
+    of 0: lane.agent.carrying.kind == ckKey and
+          lane.agent.carrying.colour == lane.task.keyColour
+    of 1: lane.task.grid.at(lane.task.doorX, lane.task.doorY).door == dsOpen
+    else: lane.succeeded()
+  of tfDynamic:
+    case which
+    of 0: lane.goalDistance() <= 12
+    of 1: lane.goalDistance() <= 6
+    else: lane.succeeded()
+  of tfBabyai:
+    case lane.task.instructionKind
+    of 0:
+      case which
+      of 0: lane.task.grid.findObject(lane.task.targetA).found and
+            (let spot = lane.task.grid.findObject(lane.task.targetA);
+             lane.knownMap.known(spot.x, spot.y).seen)
+      of 1:
+        let spot = lane.task.grid.findObject(lane.task.targetA)
+        spot.found and
+          manhattan(lane.agent.x, lane.agent.y, spot.x, spot.y) <= 3
+      else: lane.succeeded()
+    of 1:
+      case which
+      of 0:
+        let spot = lane.task.grid.findObject(lane.task.targetA)
+        (not spot.found) or lane.knownMap.known(spot.x, spot.y).seen
+      of 1: lane.adjacentTo(lane.task.targetA) and
+            lane.facingObject(lane.task.targetA)
+      else: lane.succeeded()
+    else:
+      case which
+      of 0: lane.agent.carrying == lane.task.targetA
+      of 1:
+        let a = lane.task.grid.findObject(lane.task.targetA)
+        let b = lane.task.grid.findObject(lane.task.targetB)
+        a.found and b.found and manhattan(a.x, a.y, b.x, b.y) <= 3
+      else: lane.succeeded()
+  of tfXland:
+    case which
+    of 0: lane.productions.len > 0
+    of 1:
+      if lane.task.rules.len < 3:
+        false
+      else:
+        var made = 0
+        for i in 0 .. 1:
+          let product = lane.task.rules[i].output
+          if lane.task.grid.objectExists(product) or
+              lane.agent.carrying == product:
+            inc made
+          else:
+            for record in lane.productions:
+              if record.output == product:
+                inc made
+                break
+        made >= 2
+    else: lane.succeeded()
+
+proc laneResolved*(lane: Lane): bool =
+  ## The lane has finished the CURRENT phase and is idling at the boundary.
+  lane.taskStarted and lane.taskOutcome != toPending
+
+# ---------------------------------------------------------------------------
+#  Phase lifecycle — synchronised across all four lanes
 # ---------------------------------------------------------------------------
 
 proc familyAt*(sim: SimServer, index: int): TaskFamily =
   if index >= 0 and index < sim.ladder.len: sim.ladder[index] else: tfLavagap
 
-proc startTask*(sim: var SimServer, index: int) =
-  ## Generates task `index`'s layout from `mix64(seed, taskIndex, ...)`,
-  ## places the agent and emits `taskstart`. Nothing about the layout depends
-  ## on what happened in an earlier task.
-  sim.taskIndex = index
-  sim.task = generate(sim.familyAt(index), sim.config.seed, index,
-    sim.config.obstacleCount, sim.config.babyaiObjects,
-    sim.config.xlandObjects, sim.config.xlandRules)
-  sim.agent = Agent(x: sim.task.startX, y: sim.task.startY,
-                    dir: sim.task.startDir)
-  sim.obstacles = sim.task.obstacles
-  sim.knownMap = KnownMap()
-  sim.productions = @[]
-  sim.subgoals = [false, false, false]
-  sim.taskTick = 0
-  sim.taskTurns = 0
-  sim.taskStarted = true
-  sim.taskOutcome = toPending
-  sim.queue = @[]
-  discard sim.knownMap.mergeVisible(sim.task.grid, sim.agent.x, sim.agent.y,
-    sim.agent.dir, sim.tickCount)
-  sim.emit(SimEvent(kind: evTaskStart, i: index, n: sim.config.taskCount,
-    m: sim.config.taskTurnCap, a: $sim.task.family, b: sim.task.mission))
+proc startLanePhase(lane: var Lane, config: GameConfig, family: TaskFamily,
+                    index, tick: int) =
+  ## Generates phase `index`'s layout from `mix64(seed, taskIndex, ...)`. The
+  ## LANE INDEX IS NOT AN INPUT, so every lane gets the identical layout,
+  ## mission sentence and rule table.
+  lane.taskIndex = index
+  lane.task = generate(family, config.seed, index, config.obstacleCount,
+    config.babyaiObjects, config.xlandObjects, config.xlandRules)
+  lane.agent = Agent(x: lane.task.startX, y: lane.task.startY,
+                     dir: lane.task.startDir)
+  lane.obstacles = lane.task.obstacles
+  lane.knownMap = KnownMap()
+  lane.productions = @[]
+  lane.subgoals = [false, false, false]
+  lane.taskTick = 0
+  lane.taskTurns = 0
+  lane.taskStarted = true
+  lane.taskOutcome = toPending
+  lane.queue = @[]
+  lane.executed = @[]
+  discard lane.knownMap.mergeVisible(lane.task.grid, lane.agent.x,
+    lane.agent.y, lane.agent.dir, tick)
 
-proc recordTask(sim: var SimServer) =
+proc startPhase*(sim: var SimServer, index: int) =
+  ## Advances EVERY lane to phase `index` together and emits ONE `taskstart`.
+  sim.taskIndex = index
+  sim.phaseStarted = true
+  let family = sim.familyAt(index)
+  for slot in 0 ..< sim.lanes.len:
+    startLanePhase(sim.lanes[slot], sim.config, family, index, sim.tickCount)
+  let mission =
+    if sim.lanes.len > 0: sim.lanes[0].task.mission else: ""
+  sim.emit(SimEvent(kind: evTaskStart, slot: -1, i: index,
+    n: sim.config.taskCount, m: sim.config.taskTurnCap, a: $family,
+    b: mission))
+
+proc recordLanePhase(lane: var Lane, index: int) =
   var record = TaskRecord(
-    family: sim.task.family,
-    mission: sim.task.mission,
-    outcome: sim.taskOutcome,
-    turns: sim.taskTurns,
-    ticks: sim.taskTick,
+    family: lane.task.family,
+    mission: lane.task.mission,
+    outcome: lane.taskOutcome,
+    turns: lane.taskTurns,
+    ticks: lane.taskTick,
     progress: 0,
-    cellsSeen: sim.knownMap.cellsSeen()
+    cellsSeen: lane.knownMap.cellsSeen()
   )
-  for earned in sim.subgoals:
+  for earned in lane.subgoals:
     if earned: inc record.progress
   if record.outcome == toSolved:
     record.progress = 3
-  while sim.records.len <= sim.taskIndex:
-    sim.records.add(TaskRecord(outcome: toUnreached))
-  sim.records[sim.taskIndex] = record
+  while lane.records.len <= index:
+    lane.records.add(TaskRecord(outcome: toUnreached))
+  lane.records[index] = record
 
-proc tasksSolved*(sim: SimServer): int =
-  for record in sim.records:
+# ---------------------------------------------------------------------------
+#  Scoring — the v1 formula, computed PER LANE
+# ---------------------------------------------------------------------------
+
+proc tasksSolved*(lane: Lane): int =
+  for record in lane.records:
     if record.outcome == toSolved: inc result
 
-proc progressTotal*(sim: SimServer): int =
-  for record in sim.records: result += record.progress
+proc progressTotal*(lane: Lane): int =
+  for record in lane.records: result += record.progress
 
-proc speedTotal*(sim: SimServer): int =
-  for record in sim.records:
+proc speedTotal*(lane: Lane, taskTurnCap: int): int =
+  for record in lane.records:
     if record.outcome == toSolved:
-      result += max(0, sim.config.taskTurnCap - record.turns)
+      result += max(0, taskTurnCap - record.turns)
 
-proc score*(sim: SimServer): int =
-  ## scores[0] = 100_000 * tasksSolved + 1_000 * progressTotal + 10 * speedTotal.
+proc laneScore*(lane: Lane, taskTurnCap: int): int =
+  ## scores[i] = 100_000 * tasksSolved + 1_000 * progressTotal + 10 * speedTotal.
   ## Higher is better and every term only ever ADDS: the minimum (0) is the
   ## honest score of a cog that solved nothing and reached no subgoal.
-  100_000 * sim.tasksSolved() + 1_000 * sim.progressTotal() +
-    10 * sim.speedTotal()
+  100_000 * lane.tasksSolved() + 1_000 * lane.progressTotal() +
+    10 * lane.speedTotal(taskTurnCap)
+
+proc tasksSolved*(sim: SimServer, slot: int): int =
+  if slot >= 0 and slot < sim.lanes.len: sim.lanes[slot].tasksSolved() else: 0
+
+proc progressTotal*(sim: SimServer, slot: int): int =
+  if slot >= 0 and slot < sim.lanes.len: sim.lanes[slot].progressTotal() else: 0
+
+proc speedTotal*(sim: SimServer, slot: int): int =
+  if slot >= 0 and slot < sim.lanes.len:
+    sim.lanes[slot].speedTotal(sim.config.taskTurnCap)
+  else: 0
+
+proc score*(sim: SimServer, slot: int): int =
+  if slot >= 0 and slot < sim.lanes.len:
+    sim.lanes[slot].laneScore(sim.config.taskTurnCap)
+  else: 0
+
+proc winner*(sim: SimServer): tuple[slot: int, tied: bool] =
+  ## The seat with the STRICTLY highest score. `scores` is already
+  ## lexicographic in (tasksSolved, progressTotal, speedTotal), so an exact
+  ## tie in `scores` is a genuine draw: no index tie-break, `winner` is null
+  ## and `tied` is true.
+  var best = -1
+  var bestSlot = -1
+  var ties = 0
+  for slot in 0 ..< sim.lanes.len:
+    let value = sim.score(slot)
+    if value > best:
+      best = value
+      bestSlot = slot
+      ties = 1
+    elif value == best:
+      inc ties
+  if ties != 1:
+    return (-1, true)
+  (bestSlot, false)
+
+# ---------------------------------------------------------------------------
+#  End conditions
+# ---------------------------------------------------------------------------
+
+proc laneEndRuleFor(rule: EndRule): LaneEndRule =
+  case rule
+  of edWallClock, edFault: lrWallClock
+  of edTurnCap: lrTurnCap
+  else: lrGauntletComplete
 
 proc finish*(sim: var SimServer, reason: EndReason, rule: EndRule) =
   if sim.phase == GameOver:
     return
-  ## Every task the episode never reached is `unreached` with zero turns,
-  ## zero ticks and zero progress — never zeroed out of the ones that ran.
-  ## The task in flight is banked with its REAL outcome, so a gauntlet whose
-  ## fifth task was solved on the very last tick still scores that solve.
-  if sim.taskStarted and sim.records.len <= sim.taskIndex:
-    if sim.taskOutcome == toPending:
-      sim.taskOutcome = toTimeout
-    sim.recordTask()
-  while sim.records.len < sim.config.taskCount:
-    sim.records.add(TaskRecord(
-      family: sim.familyAt(sim.records.len),
-      outcome: toUnreached))
+  ## Every phase a lane never reached is `unreached` with zero turns, zero
+  ## ticks and zero progress — never zeroed out of the ones that ran. The
+  ## phase in flight is banked with its REAL outcome, so a gauntlet whose
+  ## fifth phase was solved on the very last tick still scores that solve.
+  for slot in 0 ..< sim.lanes.len:
+    if sim.lanes[slot].taskStarted and
+        sim.lanes[slot].records.len <= sim.taskIndex:
+      if sim.lanes[slot].taskOutcome == toPending:
+        sim.lanes[slot].taskOutcome = toTimeout
+      recordLanePhase(sim.lanes[slot], sim.taskIndex)
+    while sim.lanes[slot].records.len < sim.config.taskCount:
+      sim.lanes[slot].records.add(TaskRecord(
+        family: sim.familyAt(sim.lanes[slot].records.len),
+        outcome: toUnreached))
+    if sim.lanes[slot].endRule == lrNone:
+      sim.lanes[slot].endRule =
+        if sim.lanes[slot].records.len >= sim.config.taskCount and
+            rule == edAllLanesComplete:
+          lrGauntletComplete
+        else:
+          laneEndRuleFor(rule)
   sim.phase = GameOver
   sim.endReason = reason
   sim.endRule = rule
   sim.gameOverTick = sim.tickCount
-  sim.emit(SimEvent(kind: evEnd, i: sim.tasksSolved(),
-    n: sim.config.taskCount, m: sim.score(), a: $reason, b: $rule))
+  var bestSolved = 0
+  var bestScore = 0
+  for slot in 0 ..< sim.lanes.len:
+    bestSolved = max(bestSolved, sim.tasksSolved(slot))
+    bestScore = max(bestScore, sim.score(slot))
+  sim.emit(SimEvent(kind: evEnd, slot: -1, i: bestSolved,
+    n: sim.config.taskCount, m: bestScore, a: $reason, b: $rule))
 
 proc applyStop*(sim: var SimServer, rule: EndRule, detail: string) =
   ## THE LOAD-BEARING STOP. A wall-clock (or fault) fact cannot be re-derived
@@ -245,198 +489,99 @@ proc applyStop*(sim: var SimServer, rule: EndRule, detail: string) =
   of edFault: sim.finish(erFault, edFault)
   else: sim.finish(erComplete, rule)
 
-proc endTask(sim: var SimServer, outcome: TaskOutcome)
+proc endLaneTask(sim: var SimServer, slot: int, outcome: TaskOutcome) =
+  sim.lanes[slot].taskOutcome = outcome
+  case outcome
+  of toSolved:
+    sim.lanes[slot].subgoals = [true, true, true]
+    sim.emitLane(slot, SimEvent(kind: evSolved, i: sim.taskIndex,
+      n: sim.lanes[slot].taskTurns, m: sim.lanes[slot].taskTick))
+  of toDied:
+    inc sim.lanes[slot].deaths
+    sim.emitLane(slot, SimEvent(kind: evFailed, i: sim.taskIndex, a: "died"))
+  of toCrashed:
+    inc sim.lanes[slot].crashes
+    sim.emitLane(slot, SimEvent(kind: evFailed, i: sim.taskIndex,
+      a: "crashed"))
+  else:
+    sim.emitLane(slot, SimEvent(kind: evFailed, i: sim.taskIndex,
+      a: "timeout"))
+
+proc allLanesResolved*(sim: SimServer): bool =
+  for lane in sim.lanes:
+    if not lane.laneResolved():
+      return false
+  true
 
 proc advanceTasks*(sim: var SimServer) =
-  ## Turn step 1: if the current task has finished, record its result and
-  ## start the next; if there is no next task, end the episode.
+  ## Turn step 1: time out every lane that has spent its phase window, and if
+  ## EVERY lane has resolved the phase, record it and start the next one in
+  ## all four lanes together. If there is no next phase, the episode ends.
   if sim.phase != Playing:
     return
-  if sim.taskStarted and sim.taskOutcome == toPending:
-    ## The task's own ELEVEN-TURN WINDOW. A turn whose plan expanded to no
-    ## primitives still costs a turn, so without this a task could take far
-    ## more than `taskTurnCap` turns and `speed[i]` would stop meaning
+  if not sim.phaseStarted:
+    sim.startPhase(0)
+    return
+  for slot in 0 ..< sim.lanes.len:
+    ## The phase's own SIX-TURN WINDOW, per lane. A turn whose plan expanded
+    ## to no primitives still costs a turn, so without this a phase could take
+    ## far more than `taskTurnCap` turns and `speed[i]` would stop meaning
     ## anything.
-    if sim.taskTurns >= sim.config.taskTurnCap:
-      sim.endTask(toTimeout)
-    else:
-      return
-  if sim.taskStarted:
-    sim.recordTask()
-    if sim.taskIndex + 1 >= sim.config.taskCount:
-      sim.finish(erComplete, edGauntletComplete)
-      return
-    sim.startTask(sim.taskIndex + 1)
-  else:
-    sim.startTask(0)
+    if sim.lanes[slot].taskOutcome == toPending and
+        sim.lanes[slot].taskTurns >= sim.config.taskTurnCap:
+      sim.endLaneTask(slot, toTimeout)
+  if not sim.allLanesResolved():
+    return
+  for slot in 0 ..< sim.lanes.len:
+    recordLanePhase(sim.lanes[slot], sim.taskIndex)
+  if sim.taskIndex + 1 >= sim.config.taskCount:
+    sim.finish(erComplete, edAllLanesComplete)
+    return
+  sim.startPhase(sim.taskIndex + 1)
+
+proc activeSeats*(sim: SimServer): seq[int] =
+  ## An ACTIVE seat is one whose lane has NOT resolved the current phase. An
+  ## idling lane is removed from the decision batch and costs NO LLM call,
+  ## which is what keeps the wall clock from paying for a lane that finished
+  ## early.
+  for slot in 0 ..< sim.lanes.len:
+    if not sim.lanes[slot].laneResolved():
+      result.add(slot)
 
 proc waitingForPlan*(sim: SimServer): bool =
-  sim.phase == Playing and sim.queue.len == 0
+  sim.phase == Playing and sim.turnTicksLeft <= 0
 
-proc installPlan*(sim: var SimServer, primitives: seq[Primitive],
-                  truncated: bool, dropped, unreachable: int) =
-  ## The turn's expanded queue, already truncated to `turnTicks`. Nothing
-  ## carries over to the next turn.
-  sim.queue = primitives
-  sim.executed = @[]
-  sim.planTruncated = truncated
-  sim.lastDropped = dropped
-  sim.lastUnreachable = unreachable
-  sim.actionsDropped += dropped
-  sim.macrosUnreachable += unreachable
+proc beginTurn*(sim: var SimServer) =
+  ## THE TURN BOUNDARY, run identically live and on playback: advance the
+  ## shared phase if it has resolved, then open a turn of `turnTicks`
+  ## sub-steps and charge it to every lane that is still active.
+  sim.advanceTasks()
+  if sim.phase != Playing:
+    return
   inc sim.turnsPlayed
-  inc sim.taskTurns
-  sim.emit(SimEvent(kind: evTurn, i: sim.turnsPlayed, n: sim.taskIndex,
-    m: sim.taskTurns))
+  sim.turnTicksLeft = max(1, sim.config.turnTicks)
+  for slot in 0 ..< sim.lanes.len:
+    sim.lanes[slot].queue = @[]
+    sim.lanes[slot].executed = @[]
+    if not sim.lanes[slot].laneResolved():
+      inc sim.lanes[slot].taskTurns
+  sim.emit(SimEvent(kind: evTurn, slot: -1, i: sim.turnsPlayed,
+    n: sim.taskIndex, m: (if sim.lanes.len > 0: sim.lanes[0].taskTurns else: 0)))
 
-# ---------------------------------------------------------------------------
-#  Success predicates and subgoals
-# ---------------------------------------------------------------------------
-
-proc facingObject(sim: SimServer, obj: ObjectRef): bool =
-  let front = sim.agent.ahead()
-  sim.task.grid.objectAt(front.x, front.y) == obj
-
-proc adjacentTo(sim: SimServer, obj: ObjectRef): bool =
-  for dir in Dirs:
-    let
-      nx = sim.agent.x + DirDx[dir]
-      ny = sim.agent.y + DirDy[dir]
-    if sim.task.grid.objectAt(nx, ny) == obj:
-      return true
-  false
-
-proc findObject*(g: Grid, obj: ObjectRef): tuple[found: bool, x, y: int] =
-  for y in 0 ..< GridSize:
-    for x in 0 ..< GridSize:
-      if g.objectAt(x, y) == obj:
-        return (true, x, y)
-  (false, 0, 0)
-
-proc onGoal*(sim: SimServer): bool =
-  sim.task.grid.at(sim.agent.x, sim.agent.y).kind == ckGoal
-
-proc goalDistance(sim: SimServer): int =
-  for y in 0 ..< GridSize:
-    for x in 0 ..< GridSize:
-      if sim.task.grid.at(x, y).kind == ckGoal:
-        return manhattan(sim.agent.x, sim.agent.y, x, y)
-  99
-
-proc succeeded*(sim: SimServer): bool =
-  ## The family's success predicate.
-  case sim.task.family
-  of tfLavagap, tfDoorkey, tfMultiroom, tfDynamic:
-    sim.onGoal()
-  of tfKeycorridor:
-    sim.agent.carrying == sim.task.goalObject
-  of tfBabyai:
-    case sim.task.instructionKind
-    of 0:
-      sim.facingObject(sim.task.targetA)
-    of 1:
-      sim.agent.carrying == sim.task.targetA
-    else:
-      ## "put X next to Y": the two objects sit on 4-adjacent cells and
-      ## NEITHER is carried.
-      if sim.agent.carrying == sim.task.targetA or
-          sim.agent.carrying == sim.task.targetB:
-        false
-      else:
-        let a = sim.task.grid.findObject(sim.task.targetA)
-        let b = sim.task.grid.findObject(sim.task.targetB)
-        a.found and b.found and manhattan(a.x, a.y, b.x, b.y) == 1
-  of tfXland:
-    sim.task.grid.objectExists(sim.task.goalObject) or
-      sim.agent.carrying == sim.task.goalObject
-
-proc subgoalHolds(sim: SimServer, which: int): bool =
-  case sim.task.family
-  of tfLavagap:
-    case which
-    of 0: sim.knownMap.known(sim.task.gapX, sim.task.gapY).seen
-    of 1: sim.agent.x > sim.task.gapX
-    else: sim.succeeded()
-  of tfDoorkey:
-    case which
-    of 0: sim.agent.carrying.kind == ckKey and
-          sim.agent.carrying.colour == sim.task.keyColour
-    of 1: sim.task.grid.at(sim.task.doorX, sim.task.doorY).door == dsOpen
-    else: sim.succeeded()
-  of tfMultiroom:
-    case which
-    of 0: roomOf(sim.agent.x, sim.agent.y) == 1
-    of 1: roomOf(sim.agent.x, sim.agent.y) == 2
-    else: sim.succeeded()
-  of tfKeycorridor:
-    case which
-    of 0: sim.agent.carrying.kind == ckKey and
-          sim.agent.carrying.colour == sim.task.keyColour
-    of 1: sim.task.grid.at(sim.task.doorX, sim.task.doorY).door == dsOpen
-    else: sim.succeeded()
-  of tfDynamic:
-    case which
-    of 0: sim.goalDistance() <= 12
-    of 1: sim.goalDistance() <= 6
-    else: sim.succeeded()
-  of tfBabyai:
-    case sim.task.instructionKind
-    of 0:
-      case which
-      of 0: sim.task.grid.findObject(sim.task.targetA).found and
-            (let spot = sim.task.grid.findObject(sim.task.targetA);
-             sim.knownMap.known(spot.x, spot.y).seen)
-      of 1:
-        let spot = sim.task.grid.findObject(sim.task.targetA)
-        spot.found and manhattan(sim.agent.x, sim.agent.y, spot.x, spot.y) <= 3
-      else: sim.succeeded()
-    of 1:
-      case which
-      of 0:
-        let spot = sim.task.grid.findObject(sim.task.targetA)
-        (not spot.found) or sim.knownMap.known(spot.x, spot.y).seen
-      of 1: sim.adjacentTo(sim.task.targetA) and
-            sim.facingObject(sim.task.targetA)
-      else: sim.succeeded()
-    else:
-      case which
-      of 0: sim.agent.carrying == sim.task.targetA
-      of 1:
-        let a = sim.task.grid.findObject(sim.task.targetA)
-        let b = sim.task.grid.findObject(sim.task.targetB)
-        a.found and b.found and manhattan(a.x, a.y, b.x, b.y) <= 3
-      else: sim.succeeded()
-  of tfXland:
-    case which
-    of 0: sim.productions.len > 0
-    of 1:
-      if sim.task.rules.len < 3:
-        false
-      else:
-        var made = 0
-        for i in 0 .. 1:
-          let product = sim.task.rules[i].output
-          if sim.task.grid.objectExists(product) or
-              sim.agent.carrying == product:
-            inc made
-          else:
-            for record in sim.productions:
-              if record.output == product:
-                inc made
-                break
-        made >= 2
-    else: sim.succeeded()
-
-proc evaluateSubgoals(sim: var SimServer) =
-  ## Tick step 7's second half: a predicate that FIRST becomes true awards its
-  ## credit permanently and emits `subgoal`. Credits are never revoked.
-  for which in 0 .. 2:
-    if sim.subgoals[which]:
-      continue
-    if sim.subgoalHolds(which):
-      sim.subgoals[which] = true
-      sim.emit(SimEvent(kind: evSubgoal, i: sim.taskIndex, n: which,
-        a: sim.task.subgoalNames[which]))
+proc installLanePlan*(sim: var SimServer, slot: int,
+                      primitives: seq[Primitive], truncated: bool,
+                      dropped, unreachable: int) =
+  ## One seat's expanded queue for this turn, already truncated to
+  ## `turnTicks`. Nothing carries over to the next turn.
+  if slot < 0 or slot >= sim.lanes.len:
+    return
+  sim.lanes[slot].queue = primitives
+  sim.lanes[slot].executed = @[]
+  sim.lanes[slot].planTruncated = truncated
+  sim.lanes[slot].lastDropped = dropped
+  sim.lanes[slot].lastUnreachable = unreachable
+  sim.lanes[slot].actionsDropped += dropped
+  sim.lanes[slot].macrosUnreachable += unreachable
 
 # ---------------------------------------------------------------------------
 #  gameHash
@@ -448,41 +593,52 @@ proc mixHash(hash: var uint64, value: int) =
   hash = hash xor (hash shr 29)
 
 proc recomputeHash(sim: var SimServer) =
-  ## The fixed mixing order of the design note. One divergent bit is caught at
-  ## the tick it happens by `checkReplayHash`.
+  ## The fixed mixing order of the addendum: every lane in ascending seat
+  ## index, then the four outcome and progress vectors, then the turn and the
+  ## global tick. One divergent bit is caught at the tick it happens by
+  ## `checkReplayHash`.
   var hash = 0xCBF29CE484222325'u64
-  hash.mixHash(sim.taskIndex)
-  hash.mixHash(sim.taskTick)
-  hash.mixHash(sim.agent.x)
-  hash.mixHash(sim.agent.y)
-  hash.mixHash(ord(sim.agent.dir))
-  hash.mixHash(ord(sim.agent.carrying.kind))
-  hash.mixHash(ord(sim.agent.carrying.colour))
-  for y in 0 ..< GridSize:
-    for x in 0 ..< GridSize:
-      let cell = sim.task.grid.cells[idx(x, y)]
-      hash.mixHash(ord(cell.kind) * 4 + (if cell.obstacle: 2 else: 0))
-      hash.mixHash(ord(cell.colour))
-      hash.mixHash(ord(cell.door))
-  for obstacle in sim.obstacles:
-    hash.mixHash(obstacle.x)
-    hash.mixHash(obstacle.y)
-  var firedMask = 0
-  for record in sim.productions:
-    for i, rule in sim.task.rules:
-      if rule.output == record.output:
-        firedMask = firedMask or (1 shl i)
-  hash.mixHash(firedMask)
-  hash.mixHash(sim.productionsFired)
-  for i, earned in sim.subgoals:
-    hash.mixHash(if earned: i + 1 else: 0)
-  for i in 0 ..< sim.config.taskCount:
-    if i < sim.records.len:
-      hash.mixHash(ord(sim.records[i].outcome))
-      hash.mixHash(sim.records[i].progress)
-    else:
-      hash.mixHash(ord(toPending))
-      hash.mixHash(0)
+  for slot in 0 ..< sim.lanes.len:
+    let lane = sim.lanes[slot]
+    hash.mixHash(sim.taskIndex)
+    hash.mixHash(lane.taskTick)
+    hash.mixHash(if lane.laneResolved(): 1 else: 0)
+    hash.mixHash(lane.agent.x)
+    hash.mixHash(lane.agent.y)
+    hash.mixHash(ord(lane.agent.dir))
+    hash.mixHash(ord(lane.agent.carrying.kind))
+    hash.mixHash(ord(lane.agent.carrying.colour))
+    for y in 0 ..< GridSize:
+      for x in 0 ..< GridSize:
+        let cell = lane.task.grid.cells[idx(x, y)]
+        hash.mixHash(ord(cell.kind) * 4 + (if cell.obstacle: 2 else: 0))
+        hash.mixHash(ord(cell.colour))
+        hash.mixHash(ord(cell.door))
+    for obstacle in lane.obstacles:
+      hash.mixHash(obstacle.x)
+      hash.mixHash(obstacle.y)
+    var firedMask = 0
+    for record in lane.productions:
+      for i, rule in lane.task.rules:
+        if rule.output == record.output:
+          firedMask = firedMask or (1 shl i)
+    hash.mixHash(firedMask)
+    hash.mixHash(lane.productionsFired)
+    for i, earned in lane.subgoals:
+      hash.mixHash(if earned: i + 1 else: 0)
+  for slot in 0 ..< sim.lanes.len:
+    for i in 0 ..< sim.config.taskCount:
+      if i < sim.lanes[slot].records.len:
+        hash.mixHash(ord(sim.lanes[slot].records[i].outcome))
+      else:
+        hash.mixHash(ord(toPending))
+  for slot in 0 ..< sim.lanes.len:
+    for i in 0 ..< sim.config.taskCount:
+      if i < sim.lanes[slot].records.len:
+        hash.mixHash(sim.lanes[slot].records[i].progress)
+      else:
+        hash.mixHash(0)
+  hash.mixHash(sim.turnsPlayed)
   hash.mixHash(sim.tickCount)
   sim.hash = hash
 
@@ -492,121 +648,156 @@ proc gameHash*(sim: SimServer): uint64 = sim.hash
 #  The tick
 # ---------------------------------------------------------------------------
 
-proc endTask(sim: var SimServer, outcome: TaskOutcome) =
-  sim.taskOutcome = outcome
-  case outcome
-  of toSolved:
-    sim.subgoals = [true, true, true]
-    sim.emit(SimEvent(kind: evSolved, i: sim.taskIndex, n: sim.taskTurns,
-      m: sim.taskTick))
-  of toDied:
-    inc sim.deaths
-    sim.emit(SimEvent(kind: evFailed, i: sim.taskIndex, a: "died"))
-  of toCrashed:
-    inc sim.crashes
-    sim.emit(SimEvent(kind: evFailed, i: sim.taskIndex, a: "crashed"))
-  else:
-    sim.emit(SimEvent(kind: evFailed, i: sim.taskIndex, a: "timeout"))
-
-proc stepTick*(sim: var SimServer) =
-  ## ONE tick. This is the whole physics of the game and nothing else mutates
-  ## the world.
-  if sim.phase != Playing:
+proc stepLane*(lane: var Lane, config: GameConfig, slot, tick: int,
+               primitive: Primitive, events: var seq[SimEvent]) =
+  ## ONE lane, ONE sub-step. A PURE FUNCTION OF THIS LANE'S OWN STATE AND
+  ## THIS LANE'S OWN PRIMITIVE: it takes no `SimServer`, reads no other lane
+  ## and writes no other lane. `events` is append-only and never read back, so
+  ## it cannot carry state between lanes either.
+  if lane.taskOutcome != toPending or not lane.taskStarted:
     return
-  if sim.queue.len == 0:
-    sim.advanceTasks()
-    if sim.phase != Playing:
-      return
-
-  inc sim.tickCount
-  inc sim.taskTick
-
-  # 2. Pop the next primitive. An empty queue is a real `wait`: the tick is
-  #    spent, which is the cost of a plan that ran out.
-  var primitive = pWait
-  if sim.queue.len > 0:
-    primitive = sim.queue[0]
-    sim.queue.delete(0)
-  sim.executed.add(primitive)
+  inc lane.taskTick
+  inc lane.laneTicks
+  lane.executed.add(primitive)
   if primitive != pWait:
-    inc sim.primitivesExecuted
+    inc lane.primitivesExecuted
 
   # 3. Apply the primitive.
-  let outcome = sim.agent.applyPrimitive(sim.task.grid, primitive)
+  let outcome = lane.agent.applyPrimitive(lane.task.grid, primitive)
   var finished = toPending
   case outcome.effect
   of pePickup:
-    inc sim.objectsPickedUp
-    sim.emit(SimEvent(kind: evPickup, x: outcome.x, y: outcome.y,
+    inc lane.objectsPickedUp
+    events.add(SimEvent(kind: evPickup, tick: tick, slot: slot,
+      x: outcome.x, y: outcome.y,
       a: $outcome.obj.kind, b: $outcome.obj.colour))
   of peDrop:
-    sim.emit(SimEvent(kind: evDrop, x: outcome.x, y: outcome.y,
+    events.add(SimEvent(kind: evDrop, tick: tick, slot: slot,
+      x: outcome.x, y: outcome.y,
       a: $outcome.obj.kind, b: $outcome.obj.colour))
   of peOpen:
-    inc sim.doorsOpened
-    sim.emit(SimEvent(kind: evOpen, x: outcome.x, y: outcome.y,
-      a: $outcome.colour))
+    inc lane.doorsOpened
+    events.add(SimEvent(kind: evOpen, tick: tick, slot: slot,
+      x: outcome.x, y: outcome.y, a: $outcome.colour))
   of peClose:
-    sim.emit(SimEvent(kind: evClose, x: outcome.x, y: outcome.y,
-      a: $outcome.colour))
+    events.add(SimEvent(kind: evClose, tick: tick, slot: slot,
+      x: outcome.x, y: outcome.y, a: $outcome.colour))
   of peUnlock:
-    inc sim.doorsOpened
-    sim.emit(SimEvent(kind: evUnlock, x: outcome.x, y: outcome.y,
-      a: $outcome.colour, b: $outcome.colour))
+    inc lane.doorsOpened
+    events.add(SimEvent(kind: evUnlock, tick: tick, slot: slot,
+      x: outcome.x, y: outcome.y, a: $outcome.colour, b: $outcome.colour))
   of peCrash:
-    sim.emit(SimEvent(kind: evCrash, x: outcome.x, y: outcome.y))
+    events.add(SimEvent(kind: evCrash, tick: tick, slot: slot,
+      x: outcome.x, y: outcome.y))
     finished = toCrashed
   else: discard
 
   # 4. Obstacles move (dynamic tasks only).
-  if sim.obstacles.len > 0:
-    sim.task.grid.stepObstacles(sim.obstacles, sim.agent, sim.config.seed,
-      sim.taskIndex, sim.tickCount)
+  if lane.obstacles.len > 0:
+    lane.task.grid.stepObstacles(lane.obstacles, lane.agent, config.seed,
+      lane.taskIndex, tick)
 
   # 5. Production rules fire (xland tasks only). At most one per tick.
-  if sim.task.rules.len > 0:
-    let fired = sim.task.grid.stepProductions(sim.task.rules, sim.tickCount)
+  if lane.task.rules.len > 0:
+    let fired = lane.task.grid.stepProductions(lane.task.rules, tick)
     if fired.fired:
-      inc sim.productionsFired
-      sim.productions.add(fired.record)
-      sim.emit(SimEvent(kind: evProduce, x: fired.record.x, y: fired.record.y,
+      inc lane.productionsFired
+      lane.productions.add(fired.record)
+      events.add(SimEvent(kind: evProduce, tick: tick, slot: slot,
+        x: fired.record.x, y: fired.record.y,
         a: fired.record.a.describe(), b: fired.record.b.describe(),
         c: fired.record.output.describe()))
 
-  # 6. Task termination, in this order.
+  # 6. Phase termination, in this order.
   if finished == toPending:
-    if sim.task.grid.at(sim.agent.x, sim.agent.y).kind == ckLava:
-      sim.emit(SimEvent(kind: evLava, x: sim.agent.x, y: sim.agent.y))
+    if lane.task.grid.at(lane.agent.x, lane.agent.y).kind == ckLava:
+      events.add(SimEvent(kind: evLava, tick: tick, slot: slot,
+        x: lane.agent.x, y: lane.agent.y))
       finished = toDied
-    elif sim.succeeded():
+    elif lane.succeeded():
       finished = toSolved
-    elif sim.taskTick >= sim.config.taskTurnCap * sim.config.turnTicks:
+    elif lane.taskTick >= config.taskTurnCap * config.turnTicks:
       finished = toTimeout
 
   # 7. Visibility and subgoals.
-  discard sim.knownMap.mergeVisible(sim.task.grid, sim.agent.x, sim.agent.y,
-    sim.agent.dir, sim.tickCount)
+  discard lane.knownMap.mergeVisible(lane.task.grid, lane.agent.x,
+    lane.agent.y, lane.agent.dir, tick)
   if finished == toSolved:
-    sim.taskOutcome = toSolved
-  sim.evaluateSubgoals()
+    lane.taskOutcome = toSolved
+  ## A predicate that FIRST becomes true awards its credit permanently and
+  ## emits `subgoal`. Credits are never revoked.
+  for which in 0 .. 2:
+    if lane.subgoals[which]:
+      continue
+    if lane.subgoalHolds(which):
+      lane.subgoals[which] = true
+      events.add(SimEvent(kind: evSubgoal, tick: tick, slot: slot,
+        i: lane.taskIndex, n: which, a: lane.task.subgoalNames[which]))
 
   if finished != toPending:
-    sim.endTask(finished)
-    ## 9. The task finished: break out of the tick loop — the turn ends early
-    ## and the remaining ticks are skipped. They are NOT transferable.
-    sim.queue = @[]
+    ## The lane's phase resolved: it banks the outcome, emits its own
+    ## resolution event, stops stepping for the rest of the turn and idles
+    ## until the shared phase boundary.
+    lane.taskOutcome = finished
+    lane.queue = @[]
+    case finished
+    of toSolved:
+      lane.subgoals = [true, true, true]
+      events.add(SimEvent(kind: evSolved, tick: tick, slot: slot,
+        i: lane.taskIndex, n: lane.taskTurns, m: lane.taskTick))
+    of toDied:
+      inc lane.deaths
+      events.add(SimEvent(kind: evFailed, tick: tick, slot: slot,
+        i: lane.taskIndex, a: "died"))
+    of toCrashed:
+      inc lane.crashes
+      events.add(SimEvent(kind: evFailed, tick: tick, slot: slot,
+        i: lane.taskIndex, a: "crashed"))
+    else:
+      events.add(SimEvent(kind: evFailed, tick: tick, slot: slot,
+        i: lane.taskIndex, a: "timeout"))
 
-  # 8. Mix the tick into gameHash.
+proc stepTick*(sim: var SimServer) =
+  ## ONE global sub-step: every ACTIVE lane in ascending seat index takes one
+  ## primitive (or a `wait`), then the sub-step is mixed into `gameHash`.
+  if sim.phase != Playing:
+    return
+  if sim.turnTicksLeft <= 0:
+    ## The server (and, on playback, the `directive` record) opens the next
+    ## turn. Nothing steps without a turn.
+    return
+
+  inc sim.tickCount
+  dec sim.turnTicksLeft
+
+  for slot in 0 ..< sim.lanes.len:
+    if sim.lanes[slot].laneResolved():
+      continue
+    var primitive = pWait
+    if sim.lanes[slot].queue.len > 0:
+      primitive = sim.lanes[slot].queue[0]
+      sim.lanes[slot].queue.delete(0)
+    var events: seq[SimEvent]
+    stepLane(sim.lanes[slot], sim.config, slot, sim.tickCount, primitive,
+      events)
+    for event in events:
+      sim.pending.add(event)
+
+  # 8. Mix the sub-step into gameHash.
   sim.recomputeHash()
 
+  ## If every lane has resolved the shared phase, break the turn's tick loop:
+  ## the phase ends early and phase k+1 begins on the next turn.
+  if sim.allLanesResolved():
+    sim.turnTicksLeft = 0
+
   ## The turn cap, kept as an INDEPENDENT guard so no arithmetic error can
-  ## produce an unbounded loop. When the gauntlet has also run out of tasks
-  ## the honest rule is `gauntletComplete`; `turnCap` is the safety net.
-  if sim.turnsPlayed >= sim.config.maxTurns and sim.queue.len == 0 and
-      sim.taskOutcome != toPending:
-    sim.recordTask()
+  ## produce an unbounded loop. When the gauntlet has also run out of phases
+  ## the honest rule is `allLanesComplete`; `turnCap` is the safety net.
+  if sim.turnsPlayed >= sim.config.maxTurns and sim.turnTicksLeft <= 0 and
+      sim.allLanesResolved():
     sim.finish(erComplete,
-      if sim.taskIndex + 1 >= sim.config.taskCount: edGauntletComplete
+      if sim.taskIndex + 1 >= sim.config.taskCount: edAllLanesComplete
       else: edTurnCap)
 
 proc step*(sim: var SimServer) =
@@ -626,7 +817,6 @@ proc step*(sim: var SimServer) =
         sim.lobbyTicks >= sim.config.lobbyJoinTimeoutTicks:
       sim.phase = Playing
       sim.gameStartTick = sim.tickCount
-      sim.startTask(0)
     sim.recomputeHash()
   of Playing:
     sim.stepTick()
@@ -645,9 +835,12 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.config = config
   result.phase = Lobby
   result.gameEventLoggingEnabled = true
-  result.taskOutcome = toPending
   result.endRule = edNone
   result.endReason = erComplete
+  result.lanes = newSeq[Lane](max(1, config.numAgents))
+  for slot in 0 ..< result.lanes.len:
+    result.lanes[slot].taskOutcome = toPending
+    result.lanes[slot].endRule = lrNone
   result.deadSeats = newSeq[bool](max(1, config.numAgents))
   result.policyKinds = newSeq[string](max(1, config.numAgents))
   for i in 0 ..< result.policyKinds.len:
@@ -697,28 +890,37 @@ proc pushFeedDirective*(sim: var SimServer, record: string) =
   ## broadcast feed. They are re-applied at playback into NON-HASHED fields
   ## only and can never affect the simulation.
   sim.feedDirectives.add(record)
-  if sim.feedDirectives.len > 240:
+  if sim.feedDirectives.len > 320:
     sim.feedDirectives.delete(0)
 
 # ---------------------------------------------------------------------------
-#  The seat's observation
+#  The seat's observation — STRICTLY LANE-LOCAL
 # ---------------------------------------------------------------------------
 
-proc objectsJson*(sim: SimServer): JsonNode =
-  ## Every object ever in view, sorted ascending by (y, x), listing only
-  ## UNCARRIED objects. A carried object is out of the world.
+proc objectsJson*(lane: Lane): JsonNode =
+  ## The MaxObservationObjects most recently observed objects, sorted
+  ## ascending by (y, x) within that set, listing only UNCARRIED objects. A
+  ## carried object is out of the world.
   result = newJArray()
   var slots: seq[int]
   for slot in 0 ..< GridCells:
-    let entry = sim.knownMap.cells[slot]
+    let entry = lane.knownMap.cells[slot]
     if not entry.seen:
       continue
     if entry.cell.kind notin {ckKey, ckBall, ckBox, ckDoor}:
       continue
     slots.add(slot)
+  if slots.len > MaxObservationObjects:
+    ## Keep the most RECENTLY SEEN entries: sort by seenTick descending, cut,
+    ## then restore the documented (y, x) order.
+    slots.sort(proc (a, b: int): int =
+      let ta = lane.knownMap.cells[a].seenTick
+      let tb = lane.knownMap.cells[b].seenTick
+      if ta != tb: cmp(tb, ta) else: cmp(a, b))
+    slots.setLen(MaxObservationObjects)
   slots.sort()
   for slot in slots:
-    let entry = sim.knownMap.cells[slot]
+    let entry = lane.knownMap.cells[slot]
     var item = %*{
       "type": $entry.cell.kind,
       "color": $entry.cell.colour,
@@ -731,54 +933,61 @@ proc objectsJson*(sim: SimServer): JsonNode =
       item["moves"] = %true
     result.add(item)
 
-proc observationJson*(sim: SimServer, includeNotes: bool): JsonNode =
-  ## Everything the seat may legitimately know, and nothing else. The episode
-  ## seed, every unobserved cell, every layout parameter, the contents of an
-  ## unopened box, the xland rule table, future obstacle motion, the missions
-  ## and layouts of tasks not yet started, the agent's own score and its real
-  ## policy name are ALL hidden.
+proc observationJson*(sim: SimServer, slot: int, includeNotes: bool): JsonNode =
+  ## Everything seat `slot` may legitimately know, and nothing else. The
+  ## episode seed, every unobserved cell, every layout parameter, the contents
+  ## of an unopened box, the xland rule table, future obstacle motion, the
+  ## missions and layouts of phases not yet started, the agent's own score,
+  ## its real policy name — AND EVERY FACT ABOUT EVERY OTHER LANE — are ALL
+  ## hidden. This proc reads `sim.lanes[slot]` and nothing else.
+  let lane = sim.lanes[clamp(slot, 0, sim.lanes.high)]
   var view = newJArray()
-  for row in sim.task.grid.viewRows(sim.agent.x, sim.agent.y, sim.agent.dir):
+  for row in lane.task.grid.viewRows(lane.agent.x, lane.agent.y,
+      lane.agent.dir):
     view.add(%row)
   var known = newJArray()
-  for row in sim.knownMap.knownRows():
+  for row in lane.knownMap.knownRows():
     known.add(%row)
   var subgoals = newJArray()
   for i in 0 .. 2:
-    subgoals.add(%*{"name": sim.task.subgoalNames[i],
-                    "earned": sim.subgoals[i]})
+    subgoals.add(%*{"name": lane.task.subgoalNames[i],
+                    "earned": lane.subgoals[i]})
   var productions = newJArray()
-  for record in sim.productions:
+  var firstProduction = max(0, lane.productions.len - MaxObservationProductions)
+  for i in firstProduction ..< lane.productions.len:
+    let record = lane.productions[i]
     productions.add(%*{
       "a": record.a.describe(), "b": record.b.describe(),
       "out": record.output.describe(),
       "x": record.x, "y": record.y, "tick": record.tick})
   var executed = newJArray()
-  for primitive in sim.executed:
+  for primitive in lane.executed:
     executed.add(%($primitive))
-  let front = sim.agent.ahead()
-  let frontCell = sim.task.grid.at(front.x, front.y)
+  let front = lane.agent.ahead()
+  let frontCell = lane.task.grid.at(front.x, front.y)
   var carrying: JsonNode = newJNull()
-  if sim.agent.carries():
-    carrying = %*{"type": $sim.agent.carrying.kind,
-                  "color": $sim.agent.carrying.colour}
+  if lane.agent.carries():
+    carrying = %*{"type": $lane.agent.carrying.kind,
+                  "color": $lane.agent.carrying.colour}
   var aheadObject: JsonNode = newJNull()
   if frontCell.kind in {ckKey, ckBall, ckBox, ckDoor}:
     aheadObject = %*{"type": $frontCell.kind, "color": $frontCell.colour,
                      "state": (if frontCell.kind == ckDoor: $frontCell.door
                                else: "")}
+  var objects = lane.objectsJson()
   result = %*{
-    "you": seatAlias(0),
+    "you": seatAlias(slot),
+    "lane": slot,
     "task": {
       "index": sim.taskIndex + 1,
       "of": sim.config.taskCount,
-      "family": $sim.task.family,
-      "mission": sim.task.mission,
-      "turns_left": max(0, sim.config.taskTurnCap - sim.taskTurns),
+      "family": $lane.task.family,
+      "mission": lane.task.mission,
+      "turns_left": max(0, sim.config.taskTurnCap - lane.taskTurns),
       "ticks_left": max(0,
-        sim.config.taskTurnCap * sim.config.turnTicks - sim.taskTick)
+        sim.config.taskTurnCap * sim.config.turnTicks - lane.taskTick)
     },
-    "turn": sim.turnsPlayed + 1,
+    "turn": sim.turnsPlayed,
     "tick": sim.tickCount,
     "world": {
       "size": GridSize, "view": ViewSize,
@@ -790,114 +999,216 @@ proc observationJson*(sim: SimServer, includeNotes: bool): JsonNode =
       }
     },
     "agent": {
-      "x": sim.agent.x, "y": sim.agent.y, "dir": $sim.agent.dir,
+      "x": lane.agent.x, "y": lane.agent.y, "dir": $lane.agent.dir,
       "carrying": carrying,
       "ahead": {"glyph": $frontCell.glyphOf(), "object": aheadObject}
     },
     "view": view,
     "known": known,
-    "objects": sim.objectsJson(),
+    "objects": objects,
     "productions": productions,
     "last_plan": {
       "executed": executed,
-      "truncated": sim.planTruncated,
-      "dropped": sim.lastDropped,
-      "unreachable": sim.lastUnreachable
+      "truncated": lane.planTruncated,
+      "dropped": lane.lastDropped,
+      "unreachable": lane.lastUnreachable
     },
     "subgoals": subgoals,
-    "tasks_solved": sim.tasksSolved()
+    "tasks_solved": lane.tasksSolved()
   }
   if includeNotes:
-    result["notes"] = %sim.notes
+    result["notes"] = %lane.notes
+  ## THE SIZE BOUND. The whole observation JSON is capped at
+  ## MaxObservationChars, reduced by dropping WHOLE `objects` entries from the
+  ## least-recently-seen end — never by cutting a string mid-value, and never
+  ## by touching `known` or `view`, which are the game.
+  var guard = 0
+  while ($result).len > MaxObservationChars and objects.len > 0 and
+      guard < MaxObservationObjects + 2:
+    inc guard
+    var oldest = 0
+    for i in 1 ..< objects.len:
+      if objects[i]{"seen_tick"}.getInt() <
+          objects[oldest]{"seen_tick"}.getInt():
+        oldest = i
+    var kept = newJArray()
+    for i in 0 ..< objects.len:
+      if i != oldest:
+        kept.add(objects[i])
+    objects = kept
+    result["objects"] = objects
 
 # ---------------------------------------------------------------------------
 #  Results
 # ---------------------------------------------------------------------------
 
+proc laneEndRuleName(sim: SimServer, slot: int): string =
+  let rule = sim.lanes[slot].endRule
+  if rule == lrNone: $lrGauntletComplete else: $rule
+
 proc gauntletResultsJson*(sim: SimServer): string =
-  ## The closed results schema. Adding a key means updating this proc, the
-  ## manifest's `results_schema` and `tools/ci/docker_smoke.sh`'s expected-key
-  ## set in the SAME commit — Coworld schemas are closed and undeclared keys
-  ## are dropped.
+  ## The closed results schema. Every per-seat scalar is a 4-element array and
+  ## every per-phase array is a 4 x 5 array of arrays; `taskFamilies` and
+  ## `taskMissions` stay FLAT 5-element arrays, because all four lanes run the
+  ## same seeded ladder — the isolation guarantee, made visible in the
+  ## results. Adding a key means updating this proc, the manifest's
+  ## `results_schema` and `tools/ci/docker_smoke.sh`'s expected-key set in the
+  ## SAME commit — Coworld schemas are closed and undeclared keys are dropped.
   var
     names = newJArray()
     aliases = newJArray()
+    lanes = newJArray()
     scores = newJArray()
     win = newJArray()
+    laneRules = newJArray()
     families = newJArray()
     missions = newJArray()
+    phaseTurns = newJArray()
+    solvedCounts = newJArray()
+    progressTotals = newJArray()
+    speedTotals = newJArray()
     solved = newJArray()
     outcomes = newJArray()
     turns = newJArray()
     ticks = newJArray()
     progress = newJArray()
     cellsSeen = newJArray()
+    laneTicks = newJArray()
+    deaths = newJArray()
+    crashes = newJArray()
+    doors = newJArray()
+    picked = newJArray()
+    produced = newJArray()
+    primitives = newJArray()
+    droppedActions = newJArray()
+    unreachable = newJArray()
+    repaired = newJArray()
+    llmTurns = newJArray()
+    fallbackTurns = newJArray()
+    fallbackCauses = newJArray()
     dead = newJArray()
     kinds = newJArray()
-  for slot in 0 ..< sim.seatCount():
+  for slot in 0 ..< sim.lanes.len:
+    let lane = sim.lanes[slot]
     names.add(%sim.seatName(slot))
     aliases.add(%seatAlias(slot))
-    scores.add(%sim.score())
-    win.add(%(sim.tasksSolved() >= sim.config.parTasks))
+    lanes.add(%slot)
+    scores.add(%sim.score(slot))
+    win.add(%(lane.tasksSolved() >= sim.config.parTasks))
+    laneRules.add(%sim.laneEndRuleName(slot))
+    solvedCounts.add(%lane.tasksSolved())
+    progressTotals.add(%lane.progressTotal())
+    speedTotals.add(%lane.speedTotal(sim.config.taskTurnCap))
+    laneTicks.add(%lane.laneTicks)
+    deaths.add(%lane.deaths)
+    crashes.add(%lane.crashes)
+    doors.add(%lane.doorsOpened)
+    picked.add(%lane.objectsPickedUp)
+    produced.add(%lane.productionsFired)
+    primitives.add(%lane.primitivesExecuted)
+    droppedActions.add(%lane.actionsDropped)
+    unreachable.add(%lane.macrosUnreachable)
+    repaired.add(%lane.repliesRepaired)
+    llmTurns.add(%lane.llmTurns)
+    fallbackTurns.add(%lane.fallbackTurns)
+    var causes = newJObject()
+    for cause in FallbackCause:
+      if lane.fallbackCauses[cause] > 0:
+        causes[$cause] = %lane.fallbackCauses[cause]
+    fallbackCauses.add(causes)
     dead.add(%(if slot < sim.deadSeats.len: sim.deadSeats[slot] else: true))
     kinds.add(%(if slot < sim.policyKinds.len: sim.policyKinds[slot]
                 else: "scripted"))
+    var
+      laneSolved = newJArray()
+      laneOutcomes = newJArray()
+      laneTurns = newJArray()
+      laneTaskTicks = newJArray()
+      laneProgress = newJArray()
+      laneCellsSeen = newJArray()
+    for i in 0 ..< sim.config.taskCount:
+      let record =
+        if i < lane.records.len: lane.records[i]
+        else: TaskRecord(family: sim.familyAt(i), outcome: toUnreached)
+      laneSolved.add(%(record.outcome == toSolved))
+      laneOutcomes.add(%($record.outcome))
+      laneTurns.add(%record.turns)
+      laneTaskTicks.add(%record.ticks)
+      laneProgress.add(%record.progress)
+      laneCellsSeen.add(%record.cellsSeen)
+    solved.add(laneSolved)
+    outcomes.add(laneOutcomes)
+    turns.add(laneTurns)
+    ticks.add(laneTaskTicks)
+    progress.add(laneProgress)
+    cellsSeen.add(laneCellsSeen)
   for i in 0 ..< sim.config.taskCount:
-    let record =
-      if i < sim.records.len: sim.records[i]
-      else: TaskRecord(family: sim.familyAt(i), outcome: toUnreached)
-    families.add(%($record.family))
-    missions.add(%record.mission)
-    solved.add(%(record.outcome == toSolved))
-    outcomes.add(%($record.outcome))
-    turns.add(%record.turns)
-    ticks.add(%record.ticks)
-    progress.add(%record.progress)
-    cellsSeen.add(%record.cellsSeen)
-  var winner: JsonNode = newJNull()
-  if sim.tasksSolved() >= sim.config.parTasks:
-    winner = %0
-  var totalTicks = 0
-  for i in 0 ..< sim.config.taskCount:
-    if i < sim.records.len: totalTicks += sim.records[i].ticks
+    var family = $sim.familyAt(i)
+    var mission = ""
+    if sim.lanes.len > 0 and i < sim.lanes[0].records.len and
+        sim.lanes[0].records[i].mission.len > 0:
+      family = $sim.lanes[0].records[i].family
+      mission = sim.lanes[0].records[i].mission
+    elif sim.lanes.len > 0 and sim.lanes[0].taskStarted and i == sim.taskIndex:
+      mission = sim.lanes[0].task.mission
+    families.add(%family)
+    missions.add(%mission)
+    var consumed = 0
+    for slot in 0 ..< sim.lanes.len:
+      if i < sim.lanes[slot].records.len:
+        consumed = max(consumed, sim.lanes[slot].records[i].turns)
+    phaseTurns.add(%consumed)
+  let verdict = sim.winner()
+  var winnerNode: JsonNode = newJNull()
+  if not verdict.tied and verdict.slot >= 0:
+    winnerNode = %verdict.slot
+  let finalTick =
+    if sim.gameOverTick > 0: max(0, sim.gameOverTick - sim.gameStartTick)
+    else: max(0, sim.tickCount - sim.gameStartTick)
   $(%*{
     "names": names,
     "aliases": aliases,
+    "lanes": lanes,
     "scores": scores,
     "win": win,
-    "winner": winner,
+    "winner": winnerNode,
+    "tied": verdict.tied,
     "reason": $sim.endReason,
     "endRule": $sim.endRule,
+    "laneEndRule": laneRules,
     "variant": sim.config.variant,
     "seed": sim.config.seed,
     "taskCount": sim.config.taskCount,
     "parTasks": sim.config.parTasks,
-    "tasksSolved": sim.tasksSolved(),
-    "progressTotal": sim.progressTotal(),
-    "speedTotal": sim.speedTotal(),
+    "cellsTotal": GridCells,
     "taskFamilies": families,
     "taskMissions": missions,
+    "phaseTurns": phaseTurns,
+    "tasksSolved": solvedCounts,
+    "progressTotal": progressTotals,
+    "speedTotal": speedTotals,
     "taskSolved": solved,
     "taskOutcome": outcomes,
     "taskTurns": turns,
     "taskTicks": ticks,
     "taskProgress": progress,
-    "deaths": sim.deaths,
-    "crashes": sim.crashes,
     "taskCellsSeen": cellsSeen,
-    "cellsTotal": GridCells,
-    "doorsOpened": sim.doorsOpened,
-    "objectsPickedUp": sim.objectsPickedUp,
-    "productionsFired": sim.productionsFired,
-    "primitivesExecuted": sim.primitivesExecuted,
-    "actionsDropped": sim.actionsDropped,
-    "macrosUnreachable": sim.macrosUnreachable,
-    "repliesRepaired": sim.repliesRepaired,
-    "finalTick": totalTicks,
+    "laneTicks": laneTicks,
+    "deaths": deaths,
+    "crashes": crashes,
+    "doorsOpened": doors,
+    "objectsPickedUp": picked,
+    "productionsFired": produced,
+    "primitivesExecuted": primitives,
+    "actionsDropped": droppedActions,
+    "macrosUnreachable": unreachable,
+    "repliesRepaired": repaired,
+    "finalTick": finalTick,
     "turnsPlayed": sim.turnsPlayed,
     "policyKinds": kinds,
-    "llmTurns": sim.llmTurns,
-    "fallbackTurns": sim.fallbackTurns,
+    "llmTurns": llmTurns,
+    "fallbackTurns": fallbackTurns,
+    "fallbackCauses": fallbackCauses,
     "deadSeats": dead,
     "stopDetail": sim.stopDetail
   })

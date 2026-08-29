@@ -1,15 +1,16 @@
-## Claude-backed single-seat command. A policy is just a prompt: the game
-## server composes the seat's partially observed view plus that seat's
-## PLAYER_PROMPT and asks Claude what the cog does for the next twelve ticks.
+## Claude-backed per-seat command. A policy is just a prompt: the game server
+## composes each seat's partially observed view plus that seat's PLAYER_PROMPT
+## and asks Claude what that cog does for the next twenty-four ticks.
 ##
 ## Forked from `coworld-ctf/src/ctf/llm.nim` behaviour for behaviour — the
 ## credential ladder, the Bedrock model rotation, the fence-tolerant JSON
 ## extraction and the rune-boundary truncation are all that file's, because
 ## they are all scar tissue from real hosted failures.
 ##
-## Minigrid is a SINGLE-SEAT game, so the starter's one-parallel-batch-per-turn
-## machinery (`curly.makeRequests`) carries a batch of ONE and is otherwise
-## untouched. At most one request is ever in flight.
+## Minigrid is a SIMULTANEOUS-DECISION game with FOUR isolated lanes, so the
+## starter's one-parallel-batch-per-turn machinery (`curly.makeRequests`)
+## carries one request per ACTIVE seat — at most four in flight, never a
+## sequential per-seat loop.
 ##
 ## Credentials, in order of preference:
 ##   Bedrock sidecar (AWS_ENDPOINT_URL_BEDROCK_RUNTIME + AWS_BEARER_TOKEN_BEDROCK)
@@ -223,8 +224,8 @@ GLYPHS
   A  you        ?  never seen
 
 WHAT YOU SEND
-One JSON object with up to 12 actions. They run one per tick, in order, and then
-you are asked again. Anything past 12 ticks of movement is CUT OFF - re-issue it
+One JSON object with up to 24 actions. They run one per tick, in order, and then
+you are asked again. Anything past 24 ticks of movement is CUT OFF - re-issue it
 next turn.
   {"do":"forward"}  step into the cell ahead (walls and closed doors stop you)
   {"do":"left"} {"do":"right"}   turn 90 degrees

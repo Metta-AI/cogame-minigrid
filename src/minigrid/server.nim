@@ -3,8 +3,9 @@
 ## Forked from `coworld-ctf/src/ctf/server.nim` with the THREE NAMED EDITS of
 ## the design note:
 ##
-## 1. TURN BOUNDARY — unchanged in shape, with a variable turn length (the
-##    tick loop breaks early when a task finishes) and ONE seat in the batch.
+## 1. TURN BOUNDARY — unchanged in shape, with a turn of `turnTicks` sub-steps
+##    (the tick loop breaks early only when EVERY lane has resolved the shared
+##    phase) and up to FOUR seats in ONE batch.
 ## 2. REGISTRATION INTERCEPTION — the seat's Sprite v1 chat message whose text
 ##    parses as a registration object is consumed as REGISTRATION, not applied
 ##    as a shout and not written to the replay chat stream; the server writes a
@@ -61,7 +62,37 @@ const
     ("/art/lockerroom/red_5.webp",
      staticRead("../../client/art/lockerroom/red_5.webp")),
     ("/art/lockerroom/red_6.webp",
-     staticRead("../../client/art/lockerroom/red_6.webp"))
+     staticRead("../../client/art/lockerroom/red_6.webp")),
+    ("/art/lockerroom/blue_1.webp",
+     staticRead("../../client/art/lockerroom/blue_1.webp")),
+    ("/art/lockerroom/blue_2.webp",
+     staticRead("../../client/art/lockerroom/blue_2.webp")),
+    ("/art/lockerroom/blue_3.webp",
+     staticRead("../../client/art/lockerroom/blue_3.webp")),
+    ("/art/lockerroom/blue_5.webp",
+     staticRead("../../client/art/lockerroom/blue_5.webp")),
+    ("/art/lockerroom/blue_6.webp",
+     staticRead("../../client/art/lockerroom/blue_6.webp")),
+    ("/art/lockerroom/green_1.webp",
+     staticRead("../../client/art/lockerroom/green_1.webp")),
+    ("/art/lockerroom/green_2.webp",
+     staticRead("../../client/art/lockerroom/green_2.webp")),
+    ("/art/lockerroom/green_3.webp",
+     staticRead("../../client/art/lockerroom/green_3.webp")),
+    ("/art/lockerroom/green_5.webp",
+     staticRead("../../client/art/lockerroom/green_5.webp")),
+    ("/art/lockerroom/green_6.webp",
+     staticRead("../../client/art/lockerroom/green_6.webp")),
+    ("/art/lockerroom/yellow_1.webp",
+     staticRead("../../client/art/lockerroom/yellow_1.webp")),
+    ("/art/lockerroom/yellow_2.webp",
+     staticRead("../../client/art/lockerroom/yellow_2.webp")),
+    ("/art/lockerroom/yellow_3.webp",
+     staticRead("../../client/art/lockerroom/yellow_3.webp")),
+    ("/art/lockerroom/yellow_5.webp",
+     staticRead("../../client/art/lockerroom/yellow_5.webp")),
+    ("/art/lockerroom/yellow_6.webp",
+     staticRead("../../client/art/lockerroom/yellow_6.webp"))
   ]
 
 type
@@ -370,7 +401,7 @@ proc runServerLoop*() =
     eventRows: seq[string]
     started = getMonoTime()
     joinedSlots: Table[int, bool]
-    registered = false
+    registeredSlots: Table[int, bool]
     faultDetail = ""
 
   proc elapsedSeconds(): int = (getMonoTime() - started).inSeconds.int
@@ -443,7 +474,7 @@ proc runServerLoop*() =
             entry.registered = true
         if slot < sim.policyKinds.len:
           sim.policyKinds[slot] = (if parsed.isLlm: "llm" else: "scripted")
-        registered = true
+        registeredSlots[slot] = true
         ## The JOIN record carries the seat's REAL policy name, which is only
         ## known once it registers — so it is written here, at the same tick
         ## as the redacted `register` record, and playback replays both in
@@ -500,25 +531,39 @@ proc runServerLoop*() =
         var tracker = initBroadcastTracker()
         sim.stepEvents(tracker, events)
         broadcastFrame(events)
-        if sim.phase == Playing and joinedSlots.len > 0 and not registered:
-          ## EDIT 2, second half: the seat joined and the lobby ran out
-          ## without a register record. LOG LOUDLY AND REFUSE TO START — a
-          ## silent default would report a champion as scripted (the
-          ## grf-football 2026-08-27 scar).
-          echo "minigrid: FATAL — the joined seat sent no register record; ",
-            "refusing to start the game (a silent default would report a ",
-            "champion as scripted)"
-          declarePlayerFailure(0, "seat joined but never registered")
+        if sim.phase == Playing and joinedSlots.len > 0 and
+            registeredSlots.len < joinedSlots.len:
+          ## EDIT 2, second half: a seat joined and the lobby ran out without
+          ## its register record. LOG LOUDLY AND REFUSE TO START — a silent
+          ## default would report a champion as scripted (the grf-football
+          ## 2026-08-27 scar).
+          var silent = 0
+          for slot in 0 ..< sim.seatCount():
+            if joinedSlots.getOrDefault(slot, false) and
+                not registeredSlots.getOrDefault(slot, false):
+              silent = slot
+              break
+          echo "minigrid: FATAL — seat ", silent, " joined and sent no ",
+            "register record; refusing to start the game (a silent default ",
+            "would report a champion as scripted)"
+          declarePlayerFailure(silent, "seat joined but never registered")
           sim.applyStop(edFault, "seat joined but never registered")
           break
-        if wasLobby and sim.phase == Playing and joinedSlots.len == 0:
-          ## A seat that never connects does NOT end the episode: the gauntlet
+        if wasLobby and sim.phase == Playing:
+          ## A seat that never connects does NOT end the episode: ITS LANE
           ## runs to its natural end driven by `scout`, with the seat marked
-          ## dead and ONE closed-schema failure payload reported.
-          echo "minigrid: no seat connected inside the lobby window; the ",
-            "gauntlet plays out on the scout baseline"
-          declarePlayerFailure(0, "seat never connected")
-          sim.deadSeats[0] = true
+          ## dead and ONE closed-schema failure payload reported. The other
+          ## three lanes are untouched — that is what isolation buys.
+          var missing: seq[int]
+          for slot in 0 ..< sim.seatCount():
+            if not joinedSlots.getOrDefault(slot, false):
+              missing.add(slot)
+              sim.deadSeats[slot] = true
+          if missing.len > 0:
+            echo "minigrid: seats ", missing,
+              " never connected inside the lobby window; their lanes play ",
+              "out on the scout baseline"
+            declarePlayerFailure(missing[0], "seat never connected")
         ## THE LOBBY ALWAYS PACES IN WALL CLOCK, fastMode or not: it is a wait
         ## for a container to dial in, not a simulation. Without this the
         ## whole episode completes in milliseconds before the player process
@@ -530,26 +575,35 @@ proc runServerLoop*() =
           sleep((nextTick - now).inMilliseconds.int)
         continue
 
-      ## EDIT 1: the turn boundary. ONE seat, so this is a batch of one.
+      ## EDIT 1: the turn boundary. Up to FOUR active seats, in ONE batch.
       if sim.waitingForPlan():
-        sim.advanceTasks()
+        sim.beginTurn()
         if sim.phase != Playing:
           break
-        let turnIndex = sim.turnsPlayed + 1
-        let observation = sim.observationJson(includeNotes = false)
+        let turnIndex = sim.turnsPlayed
+        var observations: seq[tuple[slot: int, view: JsonNode]]
+        for slot in sim.activeSeats():
+          observations.add((slot, sim.observationJson(slot,
+            includeNotes = false)))
         let decision = engine.turn(sim, turnIndex, elapsedSeconds())
         for record in decision.records:
           writeChat(record)
-        let record = sim.applyDirective(decision.directive, observation)
-        writeChat(record)
+        for seat in decision.decisions:
+          var view: JsonNode = nil
+          for entry in observations:
+            if entry.slot == seat.slot:
+              view = entry.view
+              break
+          writeChat(sim.applyDirective(seat.slot, seat.directive, view))
 
       var events = newJArray()
       var tracker = initBroadcastTracker()
-      let before = sim.queue
+      let ticked = sim.tickCount
       sim.step()
-      if before.len > 0 and sim.executed.len > 0 and
-          getEnv("COGAME_EVENTS_URI").len > 0:
-        eventRows.add(sim.primitiveRow(sim.executed[^1]))
+      if sim.tickCount != ticked and getEnv("COGAME_EVENTS_URI").len > 0:
+        for slot in 0 ..< sim.lanes.len:
+          if sim.lanes[slot].executed.len > 0:
+            eventRows.add(sim.primitiveRow(slot, sim.lanes[slot].executed[^1]))
       recordHash()
       for event in sim.pending:
         if getEnv("COGAME_EVENTS_URI").len > 0:
@@ -573,7 +627,7 @@ proc runServerLoop*() =
     sim.applyStop(edFault, faultDetail)
 
   if sim.phase != GameOver:
-    sim.finish(erComplete, edGauntletComplete)
+    sim.finish(erComplete, edAllLanesComplete)
 
   ## THE LOAD-BEARING STOP RECORD, for EVERY end reason — not just the
   ## wall-clock one. It is written at the LAST SIMULATED TICK and applied on
@@ -618,9 +672,13 @@ proc runServerLoop*() =
   except CatchableError as error:
     echo "minigrid: failed to write events: ", error.msg
 
+  var solvedLine = ""
+  for slot in 0 ..< sim.lanes.len:
+    if slot > 0: solvedLine.add(" ")
+    solvedLine.add(seatAlias(slot) & " " & $sim.tasksSolved(slot) & "/" &
+      $config.taskCount & " (" & $sim.score(slot) & ")")
   echo "minigrid: episode complete — reason ", sim.endReason, " endRule ",
-    sim.endRule, " solved ", sim.tasksSolved(), "/", config.taskCount,
-    " score ", sim.score()
+    sim.endRule, " seats ", sim.seatCount(), " — ", solvedLine
 
   ## The gameOverTicks hold: `/healthz` and `/global` keep answering for a
   ## BOUNDED grace after artifacts are written (the lantern 0.1.3 `/global`

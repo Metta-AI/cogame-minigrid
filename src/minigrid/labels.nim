@@ -23,7 +23,8 @@ proc boardLabels*(): seq[string] =
     result.add(toUpperAscii($dir))
   for primitive in Primitive:
     result.add($primitive)
-  result.add(seatAlias(0))
+  for slot in 0 ..< LaneCount:
+    result.add(seatAlias(slot))
   result.sort()
   result = deduplicate(result)
 

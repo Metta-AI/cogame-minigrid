@@ -3,81 +3,81 @@
   "grid": [
     {
       "frontierAdjacencyWeight": 1,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": true,
-      "score": 7123800
+      "score": 6918440
     },
     {
       "frontierAdjacencyWeight": 1,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": false,
-      "score": 15550400
+      "score": 13814550
     },
     {
       "frontierAdjacencyWeight": 2,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": true,
-      "score": 7332980
+      "score": 7228520
     },
     {
       "frontierAdjacencyWeight": 2,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": false,
-      "score": 15550400
+      "score": 13814550
     },
     {
       "frontierAdjacencyWeight": 3,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": true,
-      "score": 7854210
+      "score": 7849560
     },
     {
       "frontierAdjacencyWeight": 3,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": false,
-      "score": 15550400
+      "score": 13814550
     },
     {
       "frontierAdjacencyWeight": 4,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": true,
-      "score": 9517280
+      "score": 9107940
     },
     {
       "frontierAdjacencyWeight": 4,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": false,
-      "score": 15550400
+      "score": 13814550
     },
     {
       "frontierAdjacencyWeight": 6,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": true,
-      "score": 11468560
+      "score": 10237150
     },
     {
       "frontierAdjacencyWeight": 6,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": false,
-      "score": 15550400
+      "score": 13814550
     },
     {
       "frontierAdjacencyWeight": 8,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": true,
-      "score": 12696250
+      "score": 11263340
     },
     {
       "frontierAdjacencyWeight": 8,
-      "spinTurns": 12,
+      "spinTurns": 24,
       "tieBreakByDistance": false,
-      "score": 15550400
+      "score": 13814550
     }
   ],
   "pick": {
     "frontierAdjacencyWeight": 1,
-    "spinTurns": 12,
+    "spinTurns": 24,
     "tieBreakByDistance": false,
-    "score": 15550400
+    "score": 13814550
   }
 }

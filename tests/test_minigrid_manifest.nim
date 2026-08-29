@@ -8,12 +8,14 @@ suite "minigrid manifest":
 
   test "33. manifest pins":
     let m = manifest()
-    ## num_agents == 1 in BOTH variants' game_config AND in the cert fixture,
+    ## num_agents == 4 in BOTH variants' game_config AND in the cert fixture,
     ## and ABSENT at every variant top level (`CoworldVariant` is
     ## additionalProperties:false — goofspiel-oshi-zumo 0.1.0).
     check m["variants"].len == 2
     for variant in m["variants"]:
-      check variant["game_config"]["num_agents"].getInt() == 1
+      check variant["game_config"]["num_agents"].getInt() == LaneCount
+      check variant["game_config"]["minPlayers"].getInt() == LaneCount
+      check variant["game_config"]["players"].len == LaneCount
       check not variant.hasKey("num_agents")
       check variant.hasKey("description")
       check variant["description"].getStr().len > 40
@@ -31,19 +33,49 @@ suite "minigrid manifest":
         config["taskCount"].getInt() * config["taskTurnCap"].getInt()
       check config["maxTicks"].getInt() ==
         config["maxTurns"].getInt() * config["turnTicks"].getInt()
-    check m["certification"]["game_config"]["num_agents"].getInt() == 1
+      ## THE WALL-CLOCK ARITHMETIC of §Cadence v2: the absolute worst case —
+      ## every turn burning the whole turn budget — plus 121 s of lobby,
+      ## artifacts and sim still fits inside the engine's own stop.
+      check config["maxTurns"].getInt() * config["turnBudgetMs"].getInt() div
+        1000 + 121 <= config["wallClockBudgetSeconds"].getInt()
+      ## The steady state cannot trip the 28-request rolling guard.
+      check 4 * 60000 div max(1, config["turnSpacingMs"].getInt()) <= 24
+      check config["attempt1Ms"].getInt() >= 11000
+      check config["retryMs"].getInt() >= 6000
+      check config["turnTicks"].getInt() == 24
+      check config["taskTurnCap"].getInt() == 6
+      check config["maxTurns"].getInt() == 30
+      check config["maxTicks"].getInt() == 720
+      check config["maxActionsPerTurn"].getInt() == 24
+    check m["certification"]["game_config"]["num_agents"].getInt() == LaneCount
     check not m["certification"]["game_config"].hasKey("tokens")
     check m["certification"]["game_config"]["wallClockBudgetSeconds"].getInt() <= 660
 
-    ## EVERY declared player must occupy a certification slot (raid 0.1.2), so
-    ## with one seat there is exactly one declared player and it is seated.
-    check m["player"].len == 1
-    check m["player"][0]["id"].getStr() == "scout"
-    check m["certification"]["players"].len == 1
-    check m["certification"]["players"][0]["player_id"].getStr() == "scout"
-    check m["certification"]["game_config"]["players"].len == 1
-    ## limits.cpu >= "1" (pistonball 0.1.1).
-    check m["player"][0]["resources"]["limits"]["cpu"].getStr() == "1"
+    ## EVERY declared player must occupy a certification slot (raid 0.1.2).
+    ## With four slots BOTH baselines fit, so both are declared and both are
+    ## seated.
+    check m["player"].len == 2
+    var declared: seq[string]
+    for player in m["player"]:
+      declared.add(player["id"].getStr())
+      ## limits.cpu >= "1" (pistonball 0.1.1).
+      check player["resources"]["limits"]["cpu"].getStr() == "1"
+    check declared == @["scout", "bumper"]
+    check m["certification"]["players"].len == LaneCount
+    var seated: seq[string]
+    for player in m["certification"]["players"]:
+      seated.add(player["player_id"].getStr())
+    check seated == @["scout", "bumper", "scout", "bumper"]
+    for id in declared:
+      check id in seated
+    check m["certification"]["game_config"]["players"].len == LaneCount
+    ## The four SEAT-COUNT invariants tools/ci/docker_smoke.sh cross-checks.
+    check m["certification"]["players"].len ==
+      m["certification"]["game_config"]["players"].len
+    check m["certification"]["game_config"]["players"].len ==
+      m["certification"]["game_config"]["num_agents"].getInt()
+    let smoke = readRepo("tools/ci/docker_smoke.sh")
+    check "seats_expected=\"${SMOKE_SEATS:-4}\"" in smoke
 
     ## Every ARRAY property in config_schema carries minItems/maxItems
     ## (tandem 0.1.0).
@@ -108,13 +140,21 @@ suite "minigrid manifest":
       config.validate()
       var sim = initSimServer(config)
       sim.phase = Playing
-      check config.maxTurns == 55
+      check config.maxTurns == 30
+      check config.numAgents == LaneCount
+      check sim.lanes.len == LaneCount
       check config.taskLadder.len == 5
       for taskIndex in 0 ..< config.taskCount:
-        sim.startTask(taskIndex)
-        check sim.task.mission.len > 0
-        check $sim.task.family == config.taskLadder[taskIndex]
-        check sim.task.grid.at(sim.task.startX, sim.task.startY).kind == ckEmpty
+        sim.startPhase(taskIndex)
+        for slot in 0 ..< sim.lanes.len:
+          let lane = sim.lanes[slot]
+          check lane.task.mission.len > 0
+          check $lane.task.family == config.taskLadder[taskIndex]
+          check lane.task.grid.at(lane.task.startX, lane.task.startY).kind ==
+            ckEmpty
+          ## The lane index is NOT a generator input.
+          check lane.task.grid.cells == sim.lanes[0].task.grid.cells
+          check lane.task.mission == sim.lanes[0].task.mission
       ## The ladder plays to a real end on the shipped baseline.
       let played = playScripted(config)
       check played.phase == GameOver
@@ -131,6 +171,11 @@ suite "minigrid manifest":
     norules.xlandRules = 2
     expect ConfigError:
       norules.validate()
+    ## num_agents is FOUR: not a range, not configurable.
+    var oneSeat = defaultGameConfig()
+    oneSeat.numAgents = 1
+    expect ConfigError:
+      oneSeat.validate()
 
   test "34. the manifest loads under the installed CLI's own validator":
     ## CI runs `coworld`'s `validate_upload_manifest` / `_load_template_manifest`

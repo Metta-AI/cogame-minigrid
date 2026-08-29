@@ -4,7 +4,7 @@
 # Substitute: minigrid  (lowercase game slug, e.g. bullwhip)
 #             coworld-minigrid (local image name WITHOUT a tag, must match the image in
 #                      compose.yaml minus ":latest", e.g. coworld-bullwhip)
-#             1 (seat count -- a CROSS-CHECK, not a fallback:
+#             4 (seat count -- a CROSS-CHECK, not a fallback:
 #                      docker_smoke.sh takes the seat count solely from
 #                      certification.game_config.num_agents and hard-fails if
 #                      this value disagrees with it)
@@ -397,6 +397,75 @@ jobs:
             --timeout 90 \
             --soak 10 \
             --strict-text-bounds
+
+      # ------------------------------------------------------------------
+      # The three defects VERIFY check 8 found in production, promoted into CI
+      # so they cannot regress. viewer_smoke.mjs is copied VERBATIM, so the
+      # assertions read its evidence file rather than editing the harness.
+      #   53 the clock readouts at 0 %, 50 % and 100 % are PAIRWISE DISTINCT
+      #      (production: 50 % and 100 % were byte-identical -- a click at
+      #      100 % landed mid-timeline and the caption never tracked the
+      #      playhead)
+      #   54 the feed drew rows at all (production: feed_lines 0 on every run)
+      #   55 no [http 404] and no `Unknown sprite protocol message type`
+      #      console line (production: three sprite 404s and 22 mis-framed
+      #      packets)
+      # ------------------------------------------------------------------
+      - name: The viewer defects VERIFY check 8 found stay fixed
+        run: |
+          set -euo pipefail
+          test -s viewer-smoke.json || {
+            echo "::error::viewer_smoke.mjs wrote no viewer-smoke.json"; exit 1; }
+          python3 - <<'PY'
+          import json, sys
+
+          with open("viewer-smoke.json", encoding="utf-8") as handle:
+              summary = json.load(handle)
+
+          failures = []
+
+          # --- 53: the readouts move with the playhead ---------------------
+          scrub = summary.get("scrub") or []
+          seen = {}
+          for sample in scrub:
+              seen[sample.get("at")] = sample.get("clock")
+          print("scrub readouts:", json.dumps(seen, ensure_ascii=False))
+          if len(scrub) < 3:
+              failures.append(
+                  f"the harness sampled {len(scrub)} scrub readouts, not three "
+                  "(0 %, 50 %, 100 %) -- the viewer has no reachable scrubber")
+          values = [sample.get("clock") for sample in scrub]
+          if any(value is None for value in values):
+              failures.append(f"a clock readout was null: {values}")
+          elif len(set(values)) != len(values):
+              failures.append(
+                  "the clock readouts at 0 %, 50 % and 100 % are NOT pairwise "
+                  f"distinct: {json.dumps(values, ensure_ascii=False)}. Either "
+                  "click-to-seek is mis-scaled or a readout is not a pure "
+                  "function of the playhead (VERIFY check 8).")
+
+          # --- 54: the feed drew rows --------------------------------------
+          feed_lines = summary.get("feed_lines") or 0
+          print("feed_lines:", feed_lines)
+          if feed_lines < 4:
+              failures.append(
+                  f"the feed drew {feed_lines} elements; the match feed must "
+                  "carry rows at load and keep carrying them through the soak")
+
+          # --- 55: no 404s, no unknown message types -----------------------
+          for line in summary.get("console_tail") or []:
+              if "[http 404]" in line:
+                  failures.append(f"a 404 in the console: {line}")
+              if "Unknown sprite protocol message type" in line:
+                  failures.append(f"a MIS-FRAMED packet: {line}")
+
+          if failures:
+              for failure in failures:
+                  print(f"::error::{failure}")
+              sys.exit(1)
+          print("viewer defect gates OK: readouts distinct, feed drawn, "
+                "no 404s, no unknown message types")
+          PY
 
       # docker_smoke.sh runs with NO ANTHROPIC_API_KEY, so the CI replay's seat
       # plays scripted and emits no `say` at all — the smoke replay can never

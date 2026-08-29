@@ -19,7 +19,13 @@ import std/[strutils, unicode]
 const
   GameName* = "minigrid"
 
-  GameVersion* = "1"
+  GameVersion* = "2"
+    ## GV2 (addendum v2, 2026-08-28): FOUR ISOLATED LANES OF THE SAME SEEDED
+    ## GAUNTLET. Four seats each play a private instance of the identical
+    ## five-phase ladder, phase boundaries synchronised; the timing ladder is
+    ## re-pinned (turnTicks 24, taskTurnCap 6, maxTurns 30, maxTicks 720) and
+    ## the results document becomes per-lane arrays. A GV1 replay is not
+    ## playable by this build.
     ## GV1 (first rules): ONE COG, FIVE PARTIALLY OBSERVED 13x13 TASKS.
     ## The gauntlet, the seven task families, the 7x7 visibility flood, the
     ## seven primitives, the two macros, the three-term score. Nothing is
@@ -48,11 +54,35 @@ const
   MaxPromptRunes* = 4000        ## PLAYER_PROMPT transport cap.
   MaxStopDetailRunes* = 200     ## `results.stopDetail` cap, in RUNES.
   MaxReplyBytes* = 4096         ## bytes read from the provider before parsing.
+  MaxChromeLabelBytes* = 60000
+    ## THE CHROME FRAME'S WIRE BOUND. The sprite protocol carries a sprite's
+    ## LABEL length as a U16 (`bitworld/spriteprotocol.addSprite`), so a frame
+    ## past 65535 bytes WRAPS: the client resumes parsing mid-label and reports
+    ## a nonsense message type — the 22 "Unknown sprite protocol message type:
+    ## 34" warnings of VERIFY check 8. `buildStateJson` sheds optional keys to
+    ## stay under this, and `addChrome` drops a frame that still exceeds it
+    ## rather than corrupting the stream.
 
-  MaxPlayers* = 1
-    ## num_agents is fixed at 1 in every variant and in the cert fixture.
-    ## MiniGrid / BabyAI / XLand are single-agent benchmarks and a second seat
-    ## would have nothing to do.
+  MaxPlayers* = 4
+    ## num_agents is fixed at 4 in every variant and in the cert fixture. It
+    ## is not a range and it is not configurable: four seats, four ISOLATED
+    ## lanes of the SAME seeded gauntlet, so `scores[i]` compare directly and
+    ## a league episode is a head-to-head rather than four unrelated
+    ## timelines (addendum v2 §Lane isolation).
+  LaneCount* = MaxPlayers
+
+  LaneColours*: array[LaneCount, string] = ["red", "blue", "green", "yellow"]
+    ## The lane frames, plates, beat markers and feed rows, in SEAT order —
+    ## ctf's four team colours, unedited.
+
+  MaxObservationObjects* = 24
+    ## `objects` carries at most the 24 most recently observed entries.
+  MaxObservationProductions* = 12
+    ## `productions` carries at most the last 12 firings.
+  MaxObservationChars* = 4000
+    ## The whole observation JSON, reduced by dropping WHOLE `objects`
+    ## entries from the least-recently-seen end — never by cutting a string
+    ## mid-value, and never by touching `known` or `view`, which are the game.
 
 type
   CellKind* = enum
@@ -125,12 +155,36 @@ type
     erFault = "fault"
 
   EndRule* = enum
-    ## `results.endRule` — which of the end conditions fired.
+    ## `results.endRule` — which of the EPISODE end conditions fired.
     edNone = ""
-    edGauntletComplete = "gauntletComplete"
+    edAllLanesComplete = "allLanesComplete"
     edTurnCap = "turnCap"
     edWallClock = "wallClock"
     edFault = "fault"
+
+  LaneEndRule* = enum
+    ## `results.laneEndRule[i]` — what ended THAT lane. A lane that ran its
+    ## five phases out is `gauntletComplete` whatever ended the episode.
+    lrNone = ""
+    lrGauntletComplete = "gauntletComplete"
+    lrTurnCap = "turnCap"
+    lrWallClock = "wallClock"
+
+  FallbackCause* = enum
+    ## The CLOSED cause enum. A cause is set at the POINT OF FAILURE and
+    ## copied — never re-derived from a later step. v1 derived it from the
+    ## parse step, which is where the ladder lands when there is no body to
+    ## parse, so two transport timeouts were logged `parse_error`
+    ## (VERIFY check 5).
+    fcTransportTimeout = "transport_timeout"
+    fcTransportError = "transport_error"
+    fcHttpError = "http_error"
+    fcParseError = "parse_error"
+    fcSchemaError = "schema_error"
+    fcNoCredentials = "no_credentials"
+    fcRateGuard = "rate_guard"
+    fcBudgetGuard = "budget_guard"
+    fcDisconnected = "disconnected"
 
   Phase* = enum
     Lobby
@@ -277,3 +331,21 @@ proc parseDir*(text: string): tuple[ok: bool, dir: Dir] =
   of "w", "west": (true, dirWest)
   of "n", "north": (true, dirNorth)
   else: (false, dirEast)
+
+const IdentityNames* = [
+  "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
+  ## Inherited from the starter's roster (`coworld-ctf/src/ctf/roster.nim:64`)
+  ## UNEDITED: the in-game aliases. With four lanes the first four are used —
+  ## Alpha, Beta, Gamma, Delta — and they are the ONLY names that appear in an
+  ## observation, in a prompt, in a `say`, or on the board.
+
+proc seatAlias*(slot: int): string =
+  ## The anonymous cog alias, title-cased. The seat's REAL policy name lives
+  ## only in `results.names`, in the replay's join record, and spectator-side
+  ## in the viewer.
+  let base = IdentityNames[clamp(slot, 0, IdentityNames.high)]
+  base[0].toUpperAscii() & base[1 .. ^1]
+
+proc laneColour*(slot: int): string =
+  ## The lane's colour, in seat order. Spectator-side only.
+  LaneColours[clamp(slot, 0, LaneCount - 1)]

@@ -6,21 +6,23 @@ import minigrid/[sim, replays, replay_runtime, decide, directives, driver,
 import helpers
 
 proc recordEpisode(path: string, config: GameConfig, stopAfterTurns = -1,
-                   stopRule = edGauntletComplete): SimServer =
-  ## Records a real episode to `path`, driving it exactly the way
+                   stopRule = edAllLanesComplete): SimServer =
+  ## Records a real FOUR-LANE episode to `path`, driving it exactly the way
   ## `server.nim`'s loop does — including the LOAD-BEARING stop record written
   ## one tick past the last simulated tick.
+  const Baselines = [blScout, blBumper, blScout, blBumper]
   var sim = initSimServer(config)
   var writer = openReplayWriter(path, config.resolvedJson())
-  writer.writeJoin(tickTime(0), 0, "scout", 0, "token-0")
-  discard sim.addPlayer("scout", 0, "token-0", trusted = true)
+  for slot in 0 ..< sim.seatCount():
+    let label = $Baselines[slot]
+    writer.writeJoin(tickTime(0), slot, label, slot, "token-" & $slot)
+    discard sim.addPlayer(label, slot, "token-" & $slot, trusted = true)
+    let record = registerRecord(slot, seatAlias(slot), label, "scripted",
+      label)
+    writer.writeChat(tickTime(0), 0, record)
+    sim.applyControlRecord(record)
   for entry in sim.players.mitems:
     entry.registered = true
-    entry.policy = "scout"
-    entry.kind = "scripted"
-  writer.writeChat(tickTime(0), 0,
-    registerRecord(0, "Alpha", "scout", "scripted", "scout"))
-  sim.applyControlRecord(registerRecord(0, "Alpha", "scout", "scripted", "scout"))
   while sim.phase == Lobby:
     sim.step()
     writer.writeHash(uint32(sim.tickCount), sim.gameHash())
@@ -31,14 +33,15 @@ proc recordEpisode(path: string, config: GameConfig, stopAfterTurns = -1,
     if stopAfterTurns >= 0 and turns >= stopAfterTurns:
       break
     if sim.waitingForPlan():
-      sim.advanceTasks()
+      sim.beginTurn()
       if sim.phase != Playing:
         break
-      let observation = sim.observationJson(includeNotes = false)
-      let plan = scriptedPlan(sim, blScout)
-      let record = sim.applyDirective(plan, observation)
-      writer.writeChat(tickTime(sim.tickCount), 0, record)
       inc turns
+      for slot in sim.activeSeats():
+        let observation = sim.observationJson(slot, includeNotes = false)
+        let plan = scriptedPlan(sim.lanes[slot], sim.config, Baselines[slot])
+        let record = sim.applyDirective(slot, plan, observation)
+        writer.writeChat(tickTime(sim.tickCount), 0, record)
     sim.stepTick()
     sim.pending.setLen(0)
     writer.writeHash(uint32(sim.tickCount), sim.gameHash())
@@ -70,7 +73,8 @@ suite "minigrid replay":
     ## one (the particle-worlds 2026-08-26 scar: a deadline-ended replay
     ## hash-mismatched at the stop tick because the stop was inferred rather
     ## than recorded).
-    for (label, stopAfter, rule) in [("gauntletComplete", -1, edGauntletComplete),
+    for (label, stopAfter, rule) in [("allLanesComplete", -1,
+                                      edAllLanesComplete),
                                      ("turnCap", 14, edTurnCap),
                                      ("wallClock", 9, edWallClock),
                                      ("fault", 4, edFault)]:
@@ -84,8 +88,11 @@ suite "minigrid replay":
       check derived.sim.gameHash() == recorded.gameHash()
       check derived.sim.endRule == recorded.endRule
       check derived.sim.endReason == recorded.endReason
-      check derived.sim.tasksSolved() == recorded.tasksSolved()
-      check derived.sim.score() == recorded.score()
+      for slot in 0 ..< recorded.lanes.len:
+        check derived.sim.tasksSolved(slot) == recorded.tasksSolved(slot)
+        check derived.sim.score(slot) == recorded.score(slot)
+      check derived.sim.gauntletResultsJson() ==
+        recorded.gauntletResultsJson()
 
   test "29. the replay is self-sufficient":
     let path = getTempDir() / "minigrid-selfsufficient.replay"
@@ -95,8 +102,9 @@ suite "minigrid replay":
     check data.gameName == GameName
     check data.gameVersion == GameVersion
     ## The seat's real name, its alias and the policy kind.
-    check data.joins.len == 1
+    check data.joins.len == 4
     check data.joins[0].name == "scout"
+    check data.joins[1].name == "bumper"
     var sawRegister = false
     var sawResult = false
     for chat in data.chats:
@@ -104,7 +112,7 @@ suite "minigrid replay":
       case node["k"].getStr()
       of "register":
         sawRegister = true
-        check node["alias"].getStr() == "Alpha"
+        check node["alias"].getStr() == seatAlias(node["slot"].getInt())
         check node["kind"].getStr() == "scripted"
       of "result":
         sawResult = true
@@ -127,9 +135,12 @@ suite "minigrid replay":
     ## mission sentence with NO fetch.
     let derived = rederive(path)
     check derived.mismatch == -1
-    for i in 0 ..< recorded.records.len:
-      check derived.sim.records[i].mission == recorded.records[i].mission
-      check derived.sim.records[i].family == recorded.records[i].family
+    for slot in 0 ..< recorded.lanes.len:
+      for i in 0 ..< recorded.lanes[slot].records.len:
+        check derived.sim.lanes[slot].records[i].mission ==
+          recorded.lanes[slot].records[i].mission
+        check derived.sim.lanes[slot].records[i].family ==
+          recorded.lanes[slot].records[i].family
 
   test "30. replay_summary is strict UTF-8 JSON":
     ## Every capped field filled to exactly its cap with 4-byte emoji.
@@ -151,10 +162,10 @@ suite "minigrid replay":
       "minigrid-cartographer", "llm", ""))
     writer.writeChat(tickTime(2), 0, boundedDirectiveRecord(directive, 1, 0, 0,
       "Alpha", @[pForward], true, 2, 1, nil))
-    writer.writeChat(tickTime(3), 0, fallbackRecord(1, 2, "timeout", emoji))
+    writer.writeChat(tickTime(3), 0, fallbackRecord(1, 0, 2, fcTransportTimeout, emoji))
     sim.phase = Playing
-    sim.startTask(0)
-    sim.finish(erComplete, edGauntletComplete)
+    sim.startPhase(0)
+    sim.finish(erComplete, edAllLanesComplete)
     writer.writeChat(tickTime(4), 0, resultRecord(sim))
     writer.writeHash(1'u32, 0'u64)
     writer.closeReplayWriter()
@@ -168,7 +179,11 @@ suite "minigrid replay":
     check parsed["gameVersion"].getStr() == GameVersion
     check parsed["plans"].len == 1
     check parsed["says"].len == 1
-    check parsed["says"][0].getStr().runeLen == MaxSayRunes
+    check parsed["says"][0]["text"].getStr().runeLen == MaxSayRunes
+    check parsed["aliases"].len == 4
+    check parsed["lanes"].len == 4
+    check parsed["saysBySeat"]["0"].len == 1
+    check parsed["plansBySeat"]["0"].len == 1
     check parsed["fallbacks"].getInt() == 1
     check parsed["results"]["reason"].getStr() == "complete"
 
@@ -180,8 +195,9 @@ suite "minigrid replay":
       let derived = rederive(path)
       check derived.mismatch == -1
       check derived.sim.tickCount == recorded.tickCount
-      check derived.sim.tasksSolved() == recorded.tasksSolved()
-      check derived.sim.progressTotal() == recorded.progressTotal()
+      for slot in 0 ..< recorded.lanes.len:
+        check derived.sim.tasksSolved(slot) == recorded.tasksSolved(slot)
+        check derived.sim.progressTotal(slot) == recorded.progressTotal(slot)
       check derived.sim.gameHash() == recorded.gameHash()
 
   test "32. every committed fixture carries the current GameVersion":

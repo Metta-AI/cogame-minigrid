@@ -32,6 +32,10 @@ type
     say*: string               ## <= MaxSayRunes, sanitised on rune boundaries
     notes*: string             ## <= MaxNoteRunes, echoed to this seat only
     source*: DirectiveSource
+    cause*: FallbackCause
+      ## Set at the POINT OF FAILURE when `source` is `fallback`, copied into
+      ## the `directive` record and never re-derived (addendum v2 §Fallback
+      ## causes). Meaningless for the other two sources.
     latencyMs*: int
     dropped*: int              ## entries that did not validate
     overCap*: int              ## entries past maxActionsPerTurn
@@ -184,6 +188,7 @@ proc directiveRecord*(directive: Directive, turn, task, slot: int,
     "slot": slot,
     "alias": alias,
     "source": $directive.source,
+    "cause": (if directive.source == dsFallback: $directive.cause else: ""),
     "latency_ms": directive.latencyMs,
     "actions": actionsJson(directive.actions),
     "executed": primitivesJson(executed),
