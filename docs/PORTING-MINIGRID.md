@@ -135,8 +135,9 @@ Recorded here so a reviewer does not have to rediscover them.
   `maxTurns × turnBudgetMs / 1000 + 121 ≤ wallClockBudgetSeconds` for the
   fixture too — which its 240 s wall clock cannot satisfy with the shipped 17 s
   turn budget.
-- **The system prompt still says a phase is "eleven turns".** The addendum names
-  exactly THREE numeric strings to re-pin (two in the system prompt's
-  `WHAT YOU SEND`, one in champion #2) and this is not one of them, so it is
-  left as the addendum specifies. `task.turns_left` in every observation carries
-  the true count.
+- **A FOURTH numeric string was re-pinned in the system prompt.** The addendum
+  names three (two in `WHAT YOU SEND`, one in champion #2) and misses the
+  opening paragraph's "its own eleven turns", which the six-turn cap makes
+  false — and both champions read it. Coordinator rails call: it now says "its
+  own six turns". Prompt text only; no rule, no `GameVersion`, no fixture
+  changed.

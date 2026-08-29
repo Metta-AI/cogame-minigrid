@@ -206,7 +206,7 @@ proc textOf*(
 const SystemPrompt* = """
 You are one cog alone in a 13x13 walled gridworld. You can only see a 7x7 window
 around yourself. A sentence tells you what to do. You will be given five tasks in
-a row; each has its own world and its own sentence and its own eleven turns.
+a row; each has its own world and its own sentence and its own six turns.
 
 WHAT YOU GET EACH TURN
 - "view": seven rows of seven characters, YOUR OWN VIEW, rotated so you always
