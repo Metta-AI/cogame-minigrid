@@ -83,7 +83,8 @@ Recorded here so a reviewer does not have to rediscover them.
   is what `tests/test_minigrid_endcard_labels.nim` measures. Removing the
   selectors would mean rewriting the starter's renderer.
 - **`window.CTF_WIRE` is kept as an ALIAS of `window.MINIGRID_WIRE`.**
-  `chrome_common.js` is byte-for-byte the starter's and reads `CTF_WIRE`;
+  `chrome_common.js` still reads `CTF_WIRE` (it is the starter's file, patched
+  only for the fleet-wide 0.5x speed chip);
   `tools/gen_wire_constants.nim` therefore emits both names.
 - **The replay is larger than the design note's 18 KB estimate** (~60 KB for a
   300-tick episode) because the `directive` record carries the seat's whole

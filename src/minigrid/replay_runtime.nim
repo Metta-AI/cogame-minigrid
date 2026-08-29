@@ -79,7 +79,7 @@ proc buildReplayViewerPacket*(sim: var SimServer, replay: ReplayPlayer,
   ## the walk finishes would freeze a half-scanned timeline into the HUD.
   let sendLead = not state.momentumSent and replay.scanComplete()
   result.addChrome(sim.buildStateJson(
-    events, replay.playing, replay.replaySpeed(), replay.replayMaxTick(),
+    events, replay.playing, replay.replayDisplaySpeed(), replay.replayMaxTick(),
     replay.looping, true, replay.hashMismatchTick, state.selectedJoinOrder,
     (if sendLead: replay.leadSeries else: @[]),
     replay.replayStartTick(), replay.endHoldSecondsLeft(),
