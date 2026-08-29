@@ -25,8 +25,9 @@ implements is [docs/plans/2026-08-28-minigrid-design.md](docs/plans/2026-08-28-m
   `replay_runtime.nim`, `broadcast.nim`, `global.nim` (the compositor),
   `server.nim`.
 - `src/minigrid_player.nim` — the thin seat registrar (`/bin/minigrid-player`).
-- `client/` — the broadcast chrome. `chrome_common.js` is the starter's
-  **byte-for-byte** and is sha256-pinned by `tests/test_minigrid_viewer.nim`.
+- `client/` — the broadcast chrome. `chrome_common.js` is the starter's plus
+  the fleet-wide replay-transport patch (the 0.5x speed chip and its command,
+  two lines) and is sha256-pinned by `tests/test_minigrid_viewer.nim`.
   `replay_broadcast.html` is **DERIVED** by `tools/build_broadcast_page.py`,
   never hand-edited; edit `client/minigrid_block.html` and re-run it.
 - `replay-viewer/` — the wasm entry, its emscripten link flags and the shell.

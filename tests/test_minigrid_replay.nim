@@ -242,6 +242,38 @@ suite "minigrid replay":
         check derived.sim.progressTotal(slot) == recorded.progressTotal(slot)
       check derived.sim.gameHash() == recorded.gameHash()
 
+  test "33. 1/2x is a replay-only crawl on the frame parity":
+    ## The fleet-wide 1/2x replay speed: command '5' selects
+    ## ReplayHalfSpeedIndex, the chrome shows 0.5, and the step budget spends
+    ## one tick every OTHER frame outside lulls.
+    var replay = ReplayPlayer()
+    replay.speedIndex = 0
+    applySpeedCommand(replay.speedIndex, '5')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+    check replay.replayDisplaySpeed() == 0.5
+    ## the integer speed clamps to 1x, so the live loop is unaffected
+    check replay.replaySpeed() == 1
+    replay.skipLulls = false
+    replay.halfPhase = false
+    check replay.replayStepBudget(0) == 0
+    replay.halfPhase = true
+    check replay.replayStepBudget(0) == 1
+    ## one full frame really flips the parity, so playback alternates
+    var sim = initSimServer(testConfig())
+    replay.halfPhase = false
+    replay.playing = false
+    replay.pendingSeekTick = -1
+    replay.advanceReplayPlayback(sim, proc () = discard, proc () = discard)
+    check replay.halfPhase
+    ## the chips walk onto and off the half speed, and 1/2x is the floor
+    applySpeedCommand(replay.speedIndex, '+')
+    check replay.speedIndex == 0
+    check replay.replayDisplaySpeed() == 1.0
+    applySpeedCommand(replay.speedIndex, '-')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+    applySpeedCommand(replay.speedIndex, '-')
+    check replay.speedIndex == ReplayHalfSpeedIndex
+
   test "32. every committed fixture carries the current GameVersion":
     ## The starter's sweep over tests/, kept: a fixture recorded against older
     ## rules fails the build rather than silently replaying wrong gameplay.

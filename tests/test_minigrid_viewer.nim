@@ -1,14 +1,17 @@
 ## Viewer — design note §Tests items 35..39 and 41.
 
 import std/[algorithm, os, sequtils, strutils, unittest]
-import minigrid/[sim, labels, broadcast]
+import minigrid/[sim, labels, broadcast, wire_constants]
 import minigrid/global as board
 import helpers
 
 const
-  ## The starter's chrome, byte-for-byte. Not edited, not reformatted.
+  ## The starter's chrome plus the fleet-wide replay transport patch (the
+  ## 0.5x speed chip and its command). Nothing else is edited, nothing is
+  ## reformatted, and the file still reads `window.CTF_WIRE` — the alias
+  ## `tools/gen_wire_constants.nim` emits alongside `window.MINIGRID_WIRE`.
   ChromeCommonSha256 =
-    "7ace7287e0d19bf0fddb2362c55e4d76dfb44adcd4fbc8d1743b0557ced72f7c"
+    "594ed4a72cd908922c982d0f3e3ffb04ae1d97568fcd5f5daa794042662a369c"
   ## The exact ids the design note lists as REMOVED, and the exact ids it
   ## lists as KEPT.
   RemovedIds = ["viewpanel", "minimap", "zoombar", "zoom-in", "zoom-out",
@@ -99,10 +102,17 @@ suite "minigrid viewer":
   let page = readRepo("client/replay_broadcast.html")
   let core = readRepo("client/broadcast_core.js")
 
-  test "35. chrome_common.js is BYTE-IDENTICAL to the starter's":
+  test "35. chrome_common.js is the starter's + ONLY the half-speed chip":
     let chrome = readRepo("client/chrome_common.js")
-    check chrome.len == 40022
+    check chrome.len == 40037
     check sha256Hex(chrome) == ChromeCommonSha256
+    ## The two patched lines, spelled out so a wider edit cannot hide behind a
+    ## re-pinned hash: the 0.5x fallback and the 0.5x -> command '5' mapping.
+    check "var SPEEDS = WIRE.speeds || [0.5, 1, 2, 3, 4, 8, 16];" in chrome
+    check "map = { 0.5: '5', 1: '1', 2: '2', 3: '3', 4: '4', 8: '8', 16: '6' }" in chrome
+    ## and the inherited wire lookup is UNCHANGED: the emitted block aliases
+    ## CTF_WIRE onto MINIGRID_WIRE rather than editing the starter's file.
+    check "var WIRE = window.CTF_WIRE || {};" in chrome
 
   test "36. the broadcast page is the starter's plus an appended block":
     ## The page is DERIVED from the starter by tools/build_broadcast_page.py:
@@ -389,6 +399,19 @@ suite "minigrid viewer":
     check "OidPlate + slot" in source
     check "SidLanePlate + slot" in source
     check "SidSeparator" in source
+
+  test "58. Space pauses, and the 1/2x chip is reachable on the shipped page":
+    ## The transport contract every shipped page owes the fleet. There is ONE
+    ## shipped page here (Dockerfile.replay-viewer splices
+    ## client/replay_broadcast.html into dist/index.html), so the board page's
+    ## own keydown is the whole surface — no iframe shell forwards for it.
+    check "if (k === ' ') { ev.preventDefault(); togglePlay(); }" in page
+    ## and the digit keys reach the engine, so '5' selects 1/2x from the
+    ## keyboard exactly as the chip does from the mouse.
+    check "else if (k >= '1' && k <= '9') send(k);" in page
+    ## The chip row is built from the ENGINE's speed list, which now leads
+    ## with the replay-only half speed.
+    check "speeds:[0.5,1,2,3,4,8,16]" in WireConstantsJs
 
   test "41. the label manifest is regenerated with any label change":
     let committed = readRepo("tests/label_manifest.txt")
