@@ -1,16 +1,39 @@
 # cogame-minigrid
 
-**One cog, alone, in a 13 × 13 walled gridworld it can only see 7 × 7 of.**
+**Four cogs, each alone in its own private 13 × 13 walled gridworld it can only
+see 7 × 7 of — all four racing the SAME seeded gauntlet at the same moment.**
 On the screen is a sentence: *"use the yellow key to open the door and then get
 to the green goal square"*, or *"put the red ball next to the blue box"*, or —
 in the XLand variant — *"make a purple box"* with **no** explanation of how
 purple boxes come to exist.
 
-The cog turns, walks, picks things up, opens doors and pushes objects together.
+A cog turns, walks, picks things up, opens doors and pushes objects together.
 Lava kills it. Grey obstacle balls kill it if it walks into one. An episode is a
-**gauntlet of five tasks**, each on its own seeded layout with its own sentence
-and its own eleven-turn window. The only number the league reads is **how many
-of the five it solved**.
+**gauntlet of five phases**, each on its own seeded layout with its own sentence
+and its own **six-turn** window. The only number the league reads is **how many
+of the five that lane solved**.
+
+## Four isolated lanes
+
+`num_agents` is **4**. Seat *s* plays a complete PRIVATE instance of the same
+gauntlet: every generator draw is `mix64(seed, phaseIndex, salt)` and **the lane
+index is deliberately not an input**, so all four lanes get byte-identical
+layouts, mission sentences and hidden rule tables. Nothing crosses a lane — not
+a position, not a `say`, not even a scoreboard — so a cog cannot tell whether it
+is racing three LLMs, three baselines or a mix, and `scores[i]` compare
+directly.
+
+Phase boundaries are **synchronised**: every lane starts phase *k* on the same
+turn, and a lane that resolves early idles until the boundary. That is what
+makes the quad a race on the same board at the same moment rather than four
+unrelated timelines.
+
+| seat | alias | colour | quadrant |
+|---|---|---|---|
+| 0 | `Alpha` | red | top-left |
+| 1 | `Beta` | blue | top-right |
+| 2 | `Gamma` | green | bottom-left |
+| 3 | `Delta` | yellow | bottom-right |
 
 The whole game is the gap between the sentence and the 7 × 7 window: you are
 told what to do and shown almost nothing, and every turn you spend looking is a
@@ -49,14 +72,18 @@ Colours are the six MiniGrid colours: `red green blue purple yellow grey`.
 ## Scoring
 
 ```
-scores[0] = 100_000 × tasksSolved     (0 … 5)
-          +   1_000 × progressTotal   (0 … 15, the named subgoal credits)
-          +      10 × speedTotal      (0 … 50, turns saved on solved tasks)
+scores[i] = 100_000 × tasksSolved[i]     (0 … 5)
+          +   1_000 × progressTotal[i]   (0 … 15, the named subgoal credits)
+          +      10 × speedTotal[i]      (0 … 25, turns saved on solved phases)
 ```
 
 Higher is better and **every term only ever adds**. The ordering is strictly
-lexicographic by construction: `1_000×15 + 10×50 = 15_500 < 100_000`, and
-`10×50 = 500 < 1_000`. Maximum 515 500; minimum 0.
+lexicographic by construction: `1_000×15 + 10×25 = 15_250 < 100_000`, and
+`10×25 = 250 < 1_000`. Maximum 515 250; minimum 0.
+
+`results.winner` is the seat with the **strictly** highest score; an exact tie
+in `scores` is an exact tie in all three components — a genuine draw — so
+`winner` is `null` and `results.tied` is `true`.
 
 ## Playing it
 

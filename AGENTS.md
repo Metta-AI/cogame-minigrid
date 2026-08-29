@@ -13,13 +13,14 @@ implements is [docs/plans/2026-08-28-minigrid-design.md](docs/plans/2026-08-28-m
   draw**, so every generated layout follows the FINAL seed.
 - `src/minigrid/` — the sim modules. `sim.nim` imports and RE-EXPORTS all of
   them, so `import minigrid/sim` still sees everything:
-  `sim_types.nim` (consts incl. `GameVersion`, the flatty wire types — **field
-  order is sacred** — and the rune caps), `sim_config.nim` (the `GameConfig`
-  lifecycle and its validators), `grid.nim` (the 13 × 13 cell grid, the BFS and
-  the 7 × 7 visibility flood), `tasks.nim` (the seven generators),
+  `sim_types.nim` (consts incl. `GameVersion`, `LaneCount`, the flatty wire
+  types — **field order is sacred** — and the rune caps), `sim_config.nim` (the
+  `GameConfig` lifecycle and its validators), `grid.nim` (the 13 × 13 cell grid,
+  the BFS and the 7 × 7 visibility flood), `tasks.nim` (the seven generators),
   `agent.nim` (the seven primitives), `xland.nim` (the hidden rule table),
-  `sim_state.nim` (the step loop, `gameHash`, scoring, the observation and the
-  results document), `driver.nim` (macro → primitive expansion),
+  `sim_state.nim` (the `Lane` object, `stepLane`, the step loop, `gameHash`,
+  per-lane scoring, the lane-local observation and the results document),
+  `driver.nim` (macro → primitive expansion),
   `baselines.nim`, `directives.nim`, `llm.nim`, `decide.nim`, `replays.nim`,
   `replay_runtime.nim`, `broadcast.nim`, `global.nim` (the compositor),
   `server.nim`.
@@ -37,6 +38,19 @@ implements is [docs/plans/2026-08-28-minigrid-design.md](docs/plans/2026-08-28-m
   debug and `-d:release`; `tests/shards/` is the local convenience aggregator.
 
 ## Rules of the road
+
+- **FOUR ISOLATED LANES.** `stepLane` is a PURE FUNCTION of one lane's own state
+  and that lane's own primitive: it takes no `SimServer`, reads no other lane
+  and writes no other lane. Every generator draw is
+  `mix64(seed, phaseIndex, salt)` and **the lane index is never an input**, so
+  the four lanes hold byte-identical layouts. Nothing crosses a lane — not a
+  position, not a `say`, not a score, not a scoreboard.
+  `tests/test_minigrid_isolation.nim` is what keeps that true; a helper that
+  takes the whole `SimServer` where a `Lane` would do is how it stops being
+  true.
+- **Phase boundaries are SHARED.** A phase ends only when EVERY lane has
+  resolved it; a lane that resolves early idles (no batch entry, no ticks) until
+  the boundary. `beginTurn` is the ONE place a turn opens, live and on playback.
 
 - **`GameVersion` gates replay compatibility** and carries a PREPEND-ONLY
   changelog comment. Bump it for any rule change and re-record
@@ -62,6 +76,15 @@ implements is [docs/plans/2026-08-28-minigrid-design.md](docs/plans/2026-08-28-m
   container to dial in, not a simulation.
 - Only a genuine SECOND failure may log **`falling back`**; attempt 1 says
   **`will retry`**. Phase 60 greps the game log for both.
+- **A fallback cause is set at the POINT OF FAILURE and copied, never
+  re-derived.** `transportCause` / `exceptionCause` / `usableReply` in
+  `decide.nim` are the only deciders; deriving the cause from a later step is
+  what logged two transport timeouts as `parse_error` (VERIFY check 5).
+- **The chrome frame rides a sprite LABEL whose length is a U16 on the wire.** A
+  frame past 65 535 bytes WRAPS and the client's parser resumes mid-label,
+  reporting a nonsense message type (`Unknown sprite protocol message type: 34`,
+  VERIFY check 8). `buildStateJson` sheds optional keys to stay inside
+  `MaxChromeLabelBytes`; `addChrome` drops a frame that still exceeds it.
 
 ## Local development
 
@@ -69,6 +92,7 @@ implements is [docs/plans/2026-08-28-minigrid-design.md](docs/plans/2026-08-28-m
 nim c -r tests/shards/tests.nim                          # the whole suite
 nim r --path:src tests/test_minigrid_sim.nim             # one file
 nim c -r --path:src tools/dump_board_preview.nim /tmp/b.png 42 1
+tools/record_fixture.sh                                  # re-record tests/replays/
 nim c -r --path:src tools/tune_baselines.nim --check     # the baseline sweep
 python3 tools/build_broadcast_page.py --starter <ctf> --check
 python3 tools/replay_summary.py episode.replay | jq .
