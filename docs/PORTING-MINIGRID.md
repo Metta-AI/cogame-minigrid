@@ -29,10 +29,11 @@ The divergences, each deliberate:
    burden* is lifted.
 4. **Actions are batched under a driver, not stepped one per call.** The
    "per-tick discrete" interface is preserved as the primitive set; what changed
-   is *who calls it*. Twelve primitives per LLM turn under a deterministic
+   is *who calls it*. Twenty-four primitives per LLM turn under a deterministic
    driver, plus two macros (`goto`, `face`) that expand to primitives. One LLM
-   call per primitive would be ~660 calls in a 720 s budget — impossible — and a
-   policy that cannot express "walk over there" spends every turn turning.
+   call per primitive would be ~720 calls per lane in a 720 s budget —
+   impossible — and a policy that cannot express "walk over there" spends every
+   turn turning.
 5. **Reward shape.** MiniGrid's sparse reward is `1 − 0.9 · steps/maxSteps` on
    success, 0 otherwise. The league needs one rankable integer, so tasks-solved
    is the dominant term, subgoal progress the second and speed the third. All
@@ -48,6 +49,13 @@ The divergences, each deliberate:
    ones an implementer guesses wrong.
 8. **`maxGames = 1`.** The starter's multi-game episode is not used: a gauntlet
    has no side to swap.
+9. **Four ISOLATED lanes, not four agents in one world.** MiniGrid is a
+   single-agent benchmark and this port keeps it that way per seat: the four
+   seats never share a world, so nothing about multi-agent MiniGrid is claimed.
+   What the four lanes buy is a fair, simultaneous head-to-head on the
+   IDENTICAL seeded gauntlet — the lane index is not a generator input — which
+   is what makes an episode rankable against a rival rather than against a
+   fixed par.
 
 ## Divergences from the starter (`coworld-ctf`), and from this repo's own design note
 
@@ -80,7 +88,7 @@ Recorded here so a reviewer does not have to rediscover them.
 - **The replay is larger than the design note's 18 KB estimate** (~60 KB for a
   300-tick episode) because the `directive` record carries the seat's whole
   observation, as §Record vocabulary specifies. Still trivial next to a video.
-- **`spinTurns` is design-pinned at 12, not swept.** It only fires when the
+- **`spinTurns` is design-pinned at 24, not swept.** It only fires when the
   whole reachable region is mapped and the target is not in it — a terminal
   state a sweep cannot rank. `frontierAdjacencyWeight` and the tie-break rule
   ARE swept (`tools/tune_baselines.nim`, recorded in
@@ -94,3 +102,41 @@ Recorded here so a reviewer does not have to rediscover them.
   generations — a strict top-down sprite rotated 90° IS the same character
   facing the next direction, and one render keeps the style identical across all
   four. Source sheet and split script are committed under `scripts/art/`.
+
+## Divergences introduced by addendum v2 (four isolated lanes)
+
+- **The addendum's "run lane i alone reproduces its four-lane trajectory
+  exactly" holds within a phase, not across the whole episode, when a rival's
+  plans change the SHARED phase boundary.** Phases are synchronised: a phase
+  ends when EVERY lane has resolved it, so when a rival resolves moves the turn
+  the next phase starts on. `tests/test_minigrid_isolation.nim` therefore
+  compares the per-tick state of the untouched lanes over the phase both runs
+  are still playing, and compares a WHOLE episode against a one-lane control
+  whose phase schedule is identical by construction.
+- **The static layout is emitted once per phase as retained-mode CELLS, not
+  baked into the starter's 40–99 static band.** The addendum's object budget is
+  met by the FOG RUN family it also specifies (one `0x02` per run of like cells
+  in a row instead of one per cell), which is what caps the per-frame dynamic
+  count; an unchanged cell is never re-sent, so the static bed costs nothing per
+  frame either. Baking four 624 × 624 panels into band sprites once per phase
+  would push megabytes through the viewer for the same picture.
+- **The `_front_gun` request site is in `client/replay_broadcast.html`, not in
+  `client/broadcast_core.js`,** and there is no crown overlay in this lineage's
+  page at all. The deletion is therefore an enumerated edit in
+  `tools/build_broadcast_page.py`; `broadcast_core.js` stays the starter's file.
+- **The cog is baked in four colours by `global.nim`, not by a `rig_art.nim`.**
+  This fork has no `rig_art.nim`: the cog is the nano-banana render, so the four
+  lane colours are four TINTS of the same four facings — 16 chips at the one
+  cell size, not 32 across two sizes.
+- **The certification fixture carries its own deadline ladder**
+  (`attempt1Ms 2000 / retryMs 1000 / turnBudgetMs 3000 / turnSpacingMs 0`).
+  Certification runs offline, with no LLM credentials injected, and the
+  addendum's own test 33 requires
+  `maxTurns × turnBudgetMs / 1000 + 121 ≤ wallClockBudgetSeconds` for the
+  fixture too — which its 240 s wall clock cannot satisfy with the shipped 17 s
+  turn budget.
+- **The system prompt still says a phase is "eleven turns".** The addendum names
+  exactly THREE numeric strings to re-pin (two in the system prompt's
+  `WHAT YOU SEND`, one in champion #2) and this is not one of them, so it is
+  left as the addendum specifies. `task.turns_left` in every observation carries
+  the true count.
