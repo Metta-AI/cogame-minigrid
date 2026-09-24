@@ -37,10 +37,36 @@ uv run --package metta-posttrain metta-posttrain export \
 For `xland`, add another `--bridge-command xland` and use separate trajectory
 and dataset paths. Keep `--max-decisions` at least 120: a full game can have
 30 turns with four active seats. `scout` is a deterministic protocol baseline;
-these labels do not establish strong play. A fixed numeric action codec would
-need to represent plans of up to 24 primitives plus `goto` coordinates, so
-this bridge currently supports Metta post-training rather than PufferLib or
-Metta RL.
+these labels do not establish strong play.
+
+# Numeric training
+
+`numeric_bridge.nim` exposes the same hosted lane observation as a fixed
+1,295-feature encoding. Its 182 action candidates include the two published
+scripted planners, seven single primitives, four facing commands, and `goto`
+for each grid cell. Unknown, walled, and lava cells are masked from `goto`.
+The chosen candidate is converted into a plan through the game's production
+parser and driver. The `scout` candidate is the teacher. This action catalog
+can train a policy that selects a scripted plan or overrides it with a direct
+command; it does not represent every possible 24-action sequence.
+
+```bash
+nim c -d:release --path:src --out:/tmp/minigrid-numeric-bridge \
+  src/minigrid/numeric_bridge.nim
+python3 tests/test_numeric_bridge.py /tmp/minigrid-numeric-bridge
+```
+
+From a Metta checkout containing the generic Coworld bridge, call
+`recipes.external.coworld_metta_rl.train` for Metta RL or
+`recipes.external.coworld.train` for native PufferLib. Pass
+`[/tmp/minigrid-numeric-bridge, gauntlet]` or append `xland`, set `players=4`,
+and choose a finite timestep limit. Local full teacher and random games
+completed for both variants with a constant 1,295-feature observation.
+Metta RL completed 512 steps and evaluation per variant. Native PufferLib
+completed 4,096 CUDA steps and evaluation over four episodes each on seeds 101
+and 102. Gauntlet evaluation scores were 1,500 and 2,000; XLand scores were
+0 and 250. These pilots validate the training and checkpoint paths, not
+competitive play.
 
 Using the current Metta post-training collector, ten seeded games produced
 856 train and 80 validation examples for `gauntlet`, and 880 train and 100

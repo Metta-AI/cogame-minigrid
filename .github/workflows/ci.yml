@@ -187,6 +187,11 @@ jobs:
       - name: Complete MiniGrid training bridge games
         run: python3 tests/test_training_bridge.py
 
+      - name: Complete MiniGrid numeric bridge games
+        run: |
+          nim c -d:release --hints:off --path:src --out:/tmp/minigrid-numeric-bridge src/minigrid/numeric_bridge.nim
+          python3 tests/test_numeric_bridge.py /tmp/minigrid-numeric-bridge
+
       # The shipped DefaultBaselineParams are the PICK of a grid sweep, not a
       # guess, and tools/ci/baseline_tuning.json records that sweep. Re-running
       # it with --check here is what keeps the recorded pick honest: a change to
