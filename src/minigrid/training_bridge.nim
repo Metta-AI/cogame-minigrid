@@ -17,15 +17,21 @@ var
   variant = "gauntlet"
 
 proc currentDecision(): JsonNode =
+  let view = game.observationJson(actingSeat, true)
   %*{
     "kind": "decision",
+    "game": "minigrid",
     "decision_id": decisionId,
     "seat": actingSeat,
+    "engine_seat": actingSeat,
     "turn": game.turnsPlayed,
+    "semantic_view": view,
+    "inbox": [],
     "messages": [
       {"role": "system", "content": SystemPrompt},
-      {"role": "user", "content": $game.observationJson(actingSeat, true)},
+      {"role": "user", "content": $view},
     ],
+    "speech_messages": [],
     "action_schema": {
       "type": "object",
       "properties": {
@@ -42,6 +48,7 @@ proc currentDecision(): JsonNode =
         "notes": {"type": "string", "maxLength": 300},
       },
     },
+    "typed_question": newJNull(),
   }
 
 proc reset(command: JsonNode): JsonNode =
