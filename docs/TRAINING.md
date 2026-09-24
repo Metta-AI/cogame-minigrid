@@ -62,6 +62,11 @@ From a Metta checkout containing the generic Coworld bridge, call
 `[/tmp/minigrid-numeric-bridge, gauntlet]` or append `xland`, set `players=4`,
 and choose a finite timestep limit. Local full teacher and random games
 completed for both variants with a constant 1,295-feature observation.
+Metta RL completed 512 steps and evaluation per variant. Native PufferLib
+completed 4,096 CUDA steps and evaluation over four episodes each on seeds 101
+and 102. Gauntlet evaluation scores were 1,500 and 2,000; XLand scores were
+0 and 250. These pilots validate the training and checkpoint paths, not
+competitive play.
 
 Using the current Metta post-training collector, ten seeded games produced
 856 train and 80 validation examples for `gauntlet`, and 880 train and 100
