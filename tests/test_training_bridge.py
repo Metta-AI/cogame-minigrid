@@ -33,9 +33,14 @@ with tempfile.TemporaryDirectory() as directory:
                 observation = request(process, {"kind": "reset", "seed": seed, "players": 4})
                 decisions = 0
                 while observation["kind"] == "decision":
+                    assert observation["game"] == "minigrid"
                     assert 0 <= observation["seat"] < 4
+                    assert observation["engine_seat"] == observation["seat"]
                     assert observation["decision_id"] == decisions
                     visible = json.loads(observation["messages"][1]["content"])
+                    assert visible == observation["semantic_view"]
+                    assert observation["inbox"] == observation["speech_messages"] == []
+                    assert observation["typed_question"] is None
                     assert visible["lane"] == observation["seat"]
                     assert "seed" not in visible and "scores" not in visible
                     stale = request(process, {"kind": "step", "decision_id": -1,
