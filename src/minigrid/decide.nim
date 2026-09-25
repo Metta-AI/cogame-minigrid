@@ -51,6 +51,7 @@ type
     ## What the seat registered as. A seat that registers with neither field —
     ## or never registers at all — is `scout`.
     isLlm*: bool
+    isExternal*: bool
     prompt*: string
     baseline*: Baseline
     label*: string
@@ -80,10 +81,10 @@ proc initDecisionEngine*(sim: SimServer): DecisionEngine =
     result.seats[i].label = "scout"
 
 proc policyKind*(engine: DecisionEngine, seat: int): string =
-  if seat >= 0 and seat < engine.seats.len and engine.seats[seat].isLlm:
-    "llm"
-  else:
-    "scripted"
+  if seat >= 0 and seat < engine.seats.len:
+    if engine.seats[seat].isExternal: return "external"
+    if engine.seats[seat].isLlm: return "llm"
+  "scripted"
 
 # ---------------------------------------------------------------------------
 #  Records
@@ -220,6 +221,8 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
 
   var capacity = engine.rateGuardCapacity()
   for slot in seats:
+    if slot < engine.seats.len and engine.seats[slot].isExternal:
+      continue
     if slot >= engine.seats.len or not engine.seats[slot].isLlm:
       ## A scripted seat computes locally, instantly, and consumes no request.
       plans[slot] = scriptedPlan(sim.lanes[slot], sim.config,
@@ -254,7 +257,8 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
 
   if open.len == 0:
     for slot in seats:
-      result.decisions.add(SeatDecision(slot: slot, directive: plans[slot]))
+      if not engine.seats[slot].isExternal:
+        result.decisions.add(SeatDecision(slot: slot, directive: plans[slot]))
     return
 
   # --- the rate floor ------------------------------------------------------
@@ -394,6 +398,8 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
       ") on turn ", turnIndex
 
   for slot in seats:
+    if engine.seats[slot].isExternal:
+      continue
     if not have[slot]:
       plans[slot] = scoutFallback(sim, slot, causeOf[slot], causesOf[slot])
     result.decisions.add(SeatDecision(slot: slot, directive: plans[slot]))

@@ -24,6 +24,7 @@ type
   DirectiveSource* = enum
     dsLlm = "llm"
     dsScripted = "scripted"
+    dsExternal = "external"
     dsFallback = "fallback"
 
   Directive* = object

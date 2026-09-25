@@ -32,7 +32,7 @@ def play(variant: str, teacher: bool) -> None:
             encoding = request({"kind": "encode"})
             assert encoding["decision_id"] == observation["decision_id"]
             widths.add(len(encoding["values"]))
-            assert len(encoding["actions"]) == 182
+            assert len(encoding["actions"]) == 180
             assert encoding["actions"][0] == {"choice": 0}
             view = observation["semantic_view"]
             assert "seed" not in view and "scores" not in view
@@ -41,6 +41,7 @@ def play(variant: str, teacher: bool) -> None:
             tasks.add(view["task"]["index"])
             if teacher:
                 action = json.loads(request({"kind": "teacher"})["response"])
+                assert encoding["actions"][action["choice"]] == action
             else:
                 action = rng.choice([choice for choice in encoding["actions"] if choice is not None])
             result = request({"kind": "step", "decision_id": observation["decision_id"],

@@ -33,7 +33,7 @@ episode.
 
 ## Registration
 
-The seat sends ONE Sprite v1 chat message and then only listens:
+The seat sends a Sprite v1 chat registration message:
 
 ```json
 {"policy": "<label>", "prompt": "<PLAYER_PROMPT or empty>",
@@ -48,6 +48,40 @@ the joined seat produced no register record.
 
 The registration is **re-sent** for the first ~10 s of received frames, because
 a first registration can land before the seat has an index.
+
+An external policy registers with `{"policy":"<label>","mode":"external"}`
+and no `prompt` or `scripted` value. On each active turn, the game sends a
+WebSocket text message to that seat:
+
+```json
+{"type":"decision","rid":14,"variant":"gauntlet","deadline_ms":18000,"observation":{"lane":0}}
+```
+
+The `observation` is the complete seat-private JSON described in
+[ACTIONS.md](ACTIONS.md); the example shows only its lane field. The player
+returns a text message with the same `rid` and a plan in the normal action
+format:
+
+```json
+{"type":"plan","rid":14,"plan":{"actions":[{"do":"forward"}]}}
+```
+
+The game parses and validates the plan, expands its actions against that
+seat's known map, and records the resulting directive and replay. A malformed
+plan, missing reply, or disconnected seat takes the recorded scout fallback.
+Late replies and replies for another `rid` cannot control a later turn. The
+normal certification roster continues to use the shipped scripted players.
+
+The bundled player can exercise this protocol with `PLAYER_EXTERNAL=1` and
+`PLAYER_EXTERNAL_ACTION=forward`. Set `PLAYER_JEV=1` instead to have Jev rank
+the player-visible plan candidates in the player process. It accepts the
+TypeSafe API, capture endpoint, or seat-scoped sidecar environment used by
+other Jev players. No model request or credential is handled by the game for
+this external mode. A trained policy can send the same `plan` frame from its
+own player image. The bundled numeric player adapter accepts
+`PLAYER_NUMERIC_URL`, sends the 1,295-feature observation and 180-choice mask
+to that inference service, and maps its legal choice back to this same plan
+frame. See [TRAINING.md](TRAINING.md).
 
 ## The replay
 

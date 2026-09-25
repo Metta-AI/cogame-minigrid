@@ -42,13 +42,38 @@ these labels do not establish strong play.
 # Numeric training
 
 `numeric_bridge.nim` exposes the same hosted lane observation as a fixed
-1,295-feature encoding. Its 182 action candidates include the two published
-scripted planners, seven single primitives, four facing commands, and `goto`
+1,295-feature encoding. Its 180 action candidates include seven single
+primitives, four facing commands, and `goto`
 for each grid cell. Unknown, walled, and lava cells are masked from `goto`.
 The chosen candidate is converted into a plan through the game's production
-parser and driver. The `scout` candidate is the teacher. This action catalog
-can train a policy that selects a scripted plan or overrides it with a direct
-command; it does not represent every possible 24-action sequence.
+parser and driver. The teacher projects the first action of the `scout` plan
+into this same catalog. Every candidate is a plan the ordinary player socket
+can submit from its seat-private observation; the catalog does not represent
+every possible 24-action sequence. Existing 182-choice pilot checkpoints need
+retraining against this 180-choice catalog.
+
+To serve a numeric policy, run an HTTP inference service that accepts
+`{"session": "episode token", "seat": integer, "decision_id": integer,
+"values": [1295 numbers], "action_mask": [180 booleans]}` and returns
+`{"choice": integer}`. The player generates a new session token per episode;
+the service uses it to isolate and reset recurrent state and can return the
+cached choice for a repeated decision ID. Set `PLAYER_NUMERIC_URL` in the player
+container. Set `PLAYER_NUMERIC_KEY` if the service needs a bearer token. The
+player encodes
+each seat-private observation, checks the returned choice against the same
+mask used in training, and sends its decoded plan through the normal `/player`
+socket. The game owns parsing, legality, results, and replay. The local
+`tests/numeric_stub.py` fixture returns `forward`; it verifies the serving
+protocol, not a trained checkpoint or gameplay strength.
+
+Metta's `metta-choice-serve /path/to/frozen-bundle --port 18888` implements
+this request for a single player episode. Point `PLAYER_NUMERIC_URL` at
+`http://127.0.0.1:18888/choice` when the service runs beside the player.
+Start a fresh service process for each episode. A locally initialized
+1,295-feature, 180-choice frozen bundle completed a four-seat native game
+through this path with 30 accepted external plans and no fallback. Its weights
+were not trained, so this proves checkpoint loading and protocol compatibility,
+not training quality.
 
 ```bash
 nim c -d:release --path:src --out:/tmp/minigrid-numeric-bridge \
@@ -66,13 +91,17 @@ uv run ./tools/run.py recipes.external.coworld.train --dry-run \
 ```
 
 Use `"xland"` for the other variant. Remove `--dry-run` on a CUDA host to
-train and evaluate. The recipe probes 1,295 observation features and 182
-action candidates for either variant. Local full teacher and random games
-completed for both variants. Historical pilots also completed 512 Metta RL
-steps and 4,096 native PufferLib CUDA steps per variant, with checkpoint
-evaluation on seeds 101 and 102. The duplicate legacy Metta RL recipe is
-being retired; use the native PufferLib recipe for new runs. These pilots
-validate the training path, not competitive play.
+train and evaluate. The recipe probes 1,295 observation features and 180
+action candidates for either variant. The 180-choice catalog passed full
+teacher and random bridge games plus an ordinary-player episode using the
+numeric inference fixture. The following pilots used the superseded
+182-choice catalog and require retraining before a checkpoint can be served
+through `PLAYER_NUMERIC_URL`.
+Metta RL completed 512 steps and evaluation per variant. Native PufferLib
+completed 4,096 CUDA steps and evaluation over four episodes each on seeds 101
+and 102. Gauntlet evaluation scores were 1,500 and 2,000; XLand scores were
+0 and 250. These pilots validate the training and checkpoint paths, not
+competitive play. Use the native PufferLib recipe for new runs.
 
 Using the current Metta post-training collector, ten seeded games produced
 856 train and 80 validation examples for `gauntlet`, and 880 train and 100

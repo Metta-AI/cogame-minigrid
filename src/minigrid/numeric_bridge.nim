@@ -10,7 +10,7 @@ const
   Families = ["lavagap", "doorkey", "multiroom", "keycorridor", "dynamic", "babyai", "xland"]
   Colours = ["red", "green", "blue", "purple", "yellow", "grey"]
   Types = ["key", "ball", "box", "door", "goal"]
-  GotoStart = 2 + PrimitiveNames.len + Directions.len
+  GotoStart = PrimitiveNames.len + Directions.len
   ChoiceCount = GotoStart + 13 * 13
 
 var
@@ -52,7 +52,7 @@ proc addText(bins: var array[64, int], value: string) =
       inc bins[int(hash mod 64'u32)]
       word.setLen(0)
 
-proc values(view: JsonNode): JsonNode =
+proc values*(view: JsonNode, variant: string): JsonNode =
   result = newJArray()
   for name in ["gauntlet", "xland"]:
     result.add(%(if variant == name: 1 else: 0))
@@ -116,7 +116,7 @@ proc values(view: JsonNode): JsonNode =
   for bins in [mission, subgoals, productions]:
     for count in bins: result.add(%count)
 
-proc candidates(view: JsonNode): JsonNode =
+proc candidates*(view: JsonNode): JsonNode =
   result = newJArray()
   for choice in 0 ..< ChoiceCount:
     var legal = true
@@ -132,7 +132,7 @@ proc currentDecision(): JsonNode =
     "seat": actingSeat, "engine_seat": actingSeat,
     "turn": game.turnsPlayed, "semantic_view": view, "inbox": [],
     "messages": [
-      {"role": "system", "content": "Choose a legal MiniGrid plan candidate. The scout and bumper candidates run the shipped scripted players."},
+      {"role": "system", "content": "Choose a legal MiniGrid plan candidate from this seat's observation."},
       {"role": "user", "content": $view}],
     "speech_messages": [],
     "action_schema": {"type": "object", "properties": {
@@ -156,15 +156,12 @@ proc reset(command: JsonNode): JsonNode =
   actingSeat = game.activeSeats()[0]
   currentDecision()
 
-proc planFor(choice: int): JsonNode =
-  if choice == 0:
-    return %*{"actions": actionsJson(scoutPlan(game.lanes[actingSeat], game.config).actions)}
-  if choice == 1:
-    return %*{"actions": actionsJson(bumperPlan(game.lanes[actingSeat], game.config).actions)}
-  if choice < 2 + PrimitiveNames.len:
-    return %*{"actions": [{"do": PrimitiveNames[choice - 2]}]}
+proc planFor*(choice: int): JsonNode =
+  doAssert choice in 0 ..< ChoiceCount
+  if choice < PrimitiveNames.len:
+    return %*{"actions": [{"do": PrimitiveNames[choice]}]}
   if choice < GotoStart:
-    return %*{"actions": [{"do": "face", "dir": Directions[choice - 2 - PrimitiveNames.len]}]}
+    return %*{"actions": [{"do": "face", "dir": Directions[choice - PrimitiveNames.len]}]}
   let index = choice - GotoStart
   %*{"actions": [{"do": "goto", "x": index mod 13, "y": index div 13}]}
 
@@ -214,9 +211,18 @@ when isMainModule:
     let response = case request["kind"].getStr()
       of "reset": reset(request)
       of "encode": %*{"decision_id": decisionId,
-        "values": values(game.observationJson(actingSeat, true)),
+        "values": values(game.observationJson(actingSeat, true), variant),
         "actions": candidates(game.observationJson(actingSeat, true))}
-      of "teacher": %*{"response": $(%*{"choice": 0})}
+      of "teacher":
+        let first = actionsJson(scoutPlan(game.lanes[actingSeat], game.config).actions)[0]
+        let legal = candidates(game.observationJson(actingSeat, true))
+        var choice = -1
+        for index in 0 ..< ChoiceCount:
+          if legal[index].kind != JNull and planFor(index)["actions"][0] == first:
+            choice = index
+            break
+        doAssert choice >= 0
+        %*{"response": $(%*{"choice": choice})}
       of "step": step(request)
       else: raise newException(ValueError, "unknown command")
     stdout.writeLine($response)
