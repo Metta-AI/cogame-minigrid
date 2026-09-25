@@ -81,20 +81,27 @@ nim c -d:release --path:src --out:/tmp/minigrid-numeric-bridge \
 python3 tests/test_numeric_bridge.py /tmp/minigrid-numeric-bridge
 ```
 
-From a Metta checkout containing the generic Coworld bridge, call
-`recipes.external.coworld_metta_rl.train` for Metta RL or
-`recipes.external.coworld.train` for native PufferLib. Pass
-`[/tmp/minigrid-numeric-bridge, gauntlet]` or append `xland`, set `players=4`,
-and choose a finite timestep limit. Local full teacher and random games
-completed for both variants with a constant 1,295-feature observation.
-The following pilots used the superseded 182-choice catalog and require
-retraining before a checkpoint can be served through `PLAYER_NUMERIC_URL`.
+From a Metta checkout containing the generic Coworld bridge, construct a
+bounded native PufferLib job with the maintained recipe:
+
+```bash
+uv run ./tools/run.py recipes.external.coworld.train --dry-run \
+  'command=["/tmp/minigrid-numeric-bridge","gauntlet"]' \
+  players=4 max_decisions=128 total_timesteps=4096 run=minigrid-gauntlet
+```
+
+Use `"xland"` for the other variant. Remove `--dry-run` on a CUDA host to
+train and evaluate. The recipe probes 1,295 observation features and 180
+action candidates for either variant. The 180-choice catalog passed full
+teacher and random bridge games plus an ordinary-player episode using the
+numeric inference fixture. The following pilots used the superseded
+182-choice catalog and require retraining before a checkpoint can be served
+through `PLAYER_NUMERIC_URL`.
 Metta RL completed 512 steps and evaluation per variant. Native PufferLib
 completed 4,096 CUDA steps and evaluation over four episodes each on seeds 101
 and 102. Gauntlet evaluation scores were 1,500 and 2,000; XLand scores were
 0 and 250. These pilots validate the training and checkpoint paths, not
-competitive play. The 180-choice catalog passed full teacher and random bridge
-games plus an ordinary-player episode using the numeric inference fixture.
+competitive play. Use the native PufferLib recipe for new runs.
 
 Using the current Metta post-training collector, ten seeded games produced
 856 train and 80 validation examples for `gauntlet`, and 880 train and 100
