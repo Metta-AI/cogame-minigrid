@@ -47,6 +47,8 @@ proc runEpisode(dir: string, extra: seq[(string, string)] = @[],
         "PLAYER_EXTERNAL=1 PLAYER_EXTERNAL_ACTION=forward"
       elif player == "jev":
         "PLAYER_JEV=1"
+      elif player == "numeric":
+        "PLAYER_NUMERIC_URL=http://127.0.0.1:18995"
       else:
         "PLAYER_SCRIPTED=" & player
     seats.add("COWORLD_PLAYER_WS_URL='ws://127.0.0.1:8901/player?slot=" &
@@ -125,6 +127,37 @@ suite "minigrid engine":
       stub.close()
       delEnv("TYPESAFE_BASE_URL")
       delEnv("TYPESAFE_API_KEY")
+
+  test "numeric candidate becomes an ordinary player plan":
+    let dir = getTempDir() / "minigrid-numeric-policy"
+    removeDir(dir)
+    createDir(dir)
+    let log = dir / "calls.jsonl"
+    let stub = startProcess("python3", args = @[
+      repoRoot() / "tests/numeric_stub.py", "18995", log],
+      options = {poUsePath})
+    sleep(100)
+    try:
+      let run = runEpisode(dir,
+        players = @["numeric", "bumper", "scout", "bumper"])
+      check run.code == 0
+      let results = parseJson(readFile(dir / "results.json"))
+      let summary = parseJson(execProcess("python3 " & repoRoot() &
+        "/tools/replay_summary.py " & dir / "replay.replay"))
+      check results["reason"].getStr() == "complete"
+      check results["fallbackTurns"][0].getInt() == 0
+      var plans = 0
+      for plan in summary["plans"]:
+        if plan["slot"].getInt() == 0:
+          check plan["source"].getStr() == "external"
+          check plan["verbs"][0].getStr() == "forward"
+          inc plans
+      check plans > 0
+      check readFile(log).splitLines().filterIt(it.len > 0).len == plans
+    finally:
+      stub.terminate()
+      discard stub.waitForExit()
+      stub.close()
 
   test "24. an episode writes its artifacts":
     let dir = getTempDir() / "minigrid-e2e-24"

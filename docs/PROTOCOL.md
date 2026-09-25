@@ -54,7 +54,7 @@ and no `prompt` or `scripted` value. On each active turn, the game sends a
 WebSocket text message to that seat:
 
 ```json
-{"type":"decision","rid":14,"deadline_ms":18000,"observation":{"lane":0}}
+{"type":"decision","rid":14,"variant":"gauntlet","deadline_ms":18000,"observation":{"lane":0}}
 ```
 
 The `observation` is the complete seat-private JSON described in
@@ -78,7 +78,10 @@ the player-visible plan candidates in the player process. It accepts the
 TypeSafe API, capture endpoint, or seat-scoped sidecar environment used by
 other Jev players. No model request or credential is handled by the game for
 this external mode. A trained policy can send the same `plan` frame from its
-own player image.
+own player image. The bundled numeric player adapter accepts
+`PLAYER_NUMERIC_URL`, sends the 1,295-feature observation and 180-choice mask
+to that inference service, and maps its legal choice back to this same plan
+frame. See [TRAINING.md](TRAINING.md).
 
 ## The replay
 

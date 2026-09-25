@@ -627,6 +627,7 @@ proc runServerLoop*() =
                 websocket.send($( %*{
                   "type": "decision",
                   "rid": turnIndex,
+                  "variant": config.variant,
                   "observation": sim.observationJson(slot, includeNotes = true),
                   "deadline_ms": config.attempt1Ms
                 }), TextMessage)

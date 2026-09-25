@@ -2,7 +2,7 @@
 ##
 ## The scripted and prompt modes use the existing game decision path. External
 ## mode exercises the ordinary player observation/plan path with one fixed
-## action or Jev choice; a trained policy can use the same WebSocket messages.
+## action, Jev choice, or numeric policy; each uses the same WebSocket messages.
 ##
 ##   PLAYER_PROMPT        a strategy in plain English -> this seat is an LLM seat
 ##   PLAYER_SCRIPTED      scout | bumper             -> this seat is scripted
@@ -10,6 +10,9 @@
 ##   PLAYER_EXTERNAL      1 to request player-side plans
 ##   PLAYER_EXTERNAL_ACTION  a fixed action verb for the protocol fixture
 ##   PLAYER_JEV           1 to rank player-visible plans through System One
+##   PLAYER_NUMERIC_URL   HTTP endpoint returning {"choice": int} from numeric
+##                        values and action_mask
+##   PLAYER_NUMERIC_KEY   optional bearer key for that endpoint
 ##
 ## A seat that sets neither is `scout`. To field your own policy, reuse
 ## this image and set PLAYER_PROMPT:
@@ -21,6 +24,7 @@ import
   std/[json, options, os, strutils],
   bitworld/spriteprotocol,
   minigrid/jev_policy,
+  minigrid/numeric_policy,
   minigrid/sim_types,
   whisky
 
@@ -70,7 +74,8 @@ when isMainModule:
     prompt = getEnv("PLAYER_PROMPT").strip()
     scripted = getEnv("PLAYER_SCRIPTED").strip()
     jev = getEnv("PLAYER_JEV") == "1"
-    external = getEnv("PLAYER_EXTERNAL") == "1" or jev
+    numeric = getEnv("PLAYER_NUMERIC_URL").strip().len > 0
+    external = getEnv("PLAYER_EXTERNAL") == "1" or jev or numeric
     externalAction = getEnv("PLAYER_EXTERNAL_ACTION", "wait")
     label = block:
       let explicit = getEnv("PLAYER_POLICY_LABEL").strip()
@@ -78,12 +83,15 @@ when isMainModule:
       elif prompt.len > 0: "prompt"
       elif scripted.len > 0: scripted
       elif jev: "jev"
+      elif numeric: "numeric"
       elif external: "external-action"
       else: "scout"
   if external and (prompt.len > 0 or scripted.len > 0):
     quit("PLAYER_EXTERNAL cannot be combined with prompt or scripted", 1)
+  if jev and numeric:
+    quit("PLAYER_JEV cannot be combined with PLAYER_NUMERIC_URL", 1)
   echo "minigrid player: kind=",
-    (if jev: "jev" elif external: "external"
+    (if jev: "jev" elif numeric: "numeric" elif external: "external"
      elif prompt.len > 0: "llm" else: "scripted"),
     " baseline=", (if scripted.len > 0: scripted else: "scout"),
     " label=", label
@@ -148,6 +156,7 @@ when isMainModule:
             let plan =
               if jev: choosePlan(request["observation"],
                 request["deadline_ms"].getInt())
+              elif numeric: chooseNumericPlan(request)
               else: %*{"actions": [{"do": externalAction}]}
             socket.send($( %*{
               "type": "plan",

@@ -42,13 +42,25 @@ these labels do not establish strong play.
 # Numeric training
 
 `numeric_bridge.nim` exposes the same hosted lane observation as a fixed
-1,295-feature encoding. Its 182 action candidates include the two published
-scripted planners, seven single primitives, four facing commands, and `goto`
+1,295-feature encoding. Its 180 action candidates include seven single
+primitives, four facing commands, and `goto`
 for each grid cell. Unknown, walled, and lava cells are masked from `goto`.
 The chosen candidate is converted into a plan through the game's production
-parser and driver. The `scout` candidate is the teacher. This action catalog
-can train a policy that selects a scripted plan or overrides it with a direct
-command; it does not represent every possible 24-action sequence.
+parser and driver. The teacher projects the first action of the `scout` plan
+into this same catalog. Every candidate is a plan the ordinary player socket
+can submit from its seat-private observation; the catalog does not represent
+every possible 24-action sequence. Existing 182-choice pilot checkpoints need
+retraining against this 180-choice catalog.
+
+To serve a numeric policy, run an HTTP inference service that accepts
+`{"values": [1295 numbers], "action_mask": [180 booleans]}` and returns
+`{"choice": integer}`. Set `PLAYER_NUMERIC_URL` in the player container; use
+`PLAYER_NUMERIC_KEY` if the service needs a bearer token. The player encodes
+each seat-private observation, checks the returned choice against the same
+mask used in training, and sends its decoded plan through the normal `/player`
+socket. The game owns parsing, legality, results, and replay. The local
+`tests/numeric_stub.py` fixture returns `forward`; it verifies the serving
+protocol, not a trained checkpoint or gameplay strength.
 
 ```bash
 nim c -d:release --path:src --out:/tmp/minigrid-numeric-bridge \
@@ -62,11 +74,14 @@ From a Metta checkout containing the generic Coworld bridge, call
 `[/tmp/minigrid-numeric-bridge, gauntlet]` or append `xland`, set `players=4`,
 and choose a finite timestep limit. Local full teacher and random games
 completed for both variants with a constant 1,295-feature observation.
+The following pilots used the superseded 182-choice catalog and require
+retraining before a checkpoint can be served through `PLAYER_NUMERIC_URL`.
 Metta RL completed 512 steps and evaluation per variant. Native PufferLib
 completed 4,096 CUDA steps and evaluation over four episodes each on seeds 101
 and 102. Gauntlet evaluation scores were 1,500 and 2,000; XLand scores were
 0 and 250. These pilots validate the training and checkpoint paths, not
-competitive play.
+competitive play. The 180-choice catalog passed full teacher and random bridge
+games plus an ordinary-player episode using the numeric inference fixture.
 
 Using the current Metta post-training collector, ten seeded games produced
 856 train and 80 validation examples for `gauntlet`, and 880 train and 100
