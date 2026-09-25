@@ -1,10 +1,6 @@
-# Build Docker. ONE image, TWO entrypoints: /bin/minigrid (the game server,
-# which makes every LLM call — the platform injects the anthropic_api_key
-# coworld secret into the GAME pod, not the player pod) and
-# /bin/minigrid-player (the thin seat registrar). The whole policy set is
-# env-switched inside this same image (PLAYER_PROMPT vs PLAYER_SCRIPTED),
-# which is what keeps a champion and a scripted filler byte-identical apart
-# from their environment.
+# Build Docker. ONE image, TWO entrypoints: /bin/minigrid (game server) and
+# /bin/minigrid-player (scripted, prompt, or external-action fixture). A
+# trained player may use its own image over the documented seat protocol.
 FROM debian:bookworm-slim AS build
 
 RUN apt-get update && \

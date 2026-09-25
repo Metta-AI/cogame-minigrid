@@ -103,9 +103,12 @@ type
     globalViewers: Table[WebSocket, board.GlobalViewerState]
     playerViewers: Table[WebSocket, board.PlayerViewerState]
     playerSlots: Table[WebSocket, int]
+    externalSlots: Table[int, bool]
     playerTokens: Table[WebSocket, string]
     playerNames: Table[WebSocket, string]
     chatMessages: Table[WebSocket, string]
+    externalMessages: seq[tuple[slot: int, text: string,
+                                received: MonoTime]]
     inputMasks: Table[WebSocket, uint8]
     pressedMasks: Table[WebSocket, uint8]
     closedSockets: seq[WebSocket]
@@ -300,6 +303,17 @@ proc websocketHandler(websocket: WebSocket, event: WebSocketEvent,
             if chatText.len > 0:
               appState.chatMessages[websocket] =
                 appState.chatMessages.getOrDefault(websocket, "") & chatText
+    elif message.kind == TextMessage:
+      {.gcsafe.}:
+        withLock appState.lock:
+          if websocket in appState.playerSlots and
+              appState.externalSlots.getOrDefault(
+                appState.playerSlots[websocket], false) and
+              appState.externalMessages.len < 64:
+            appState.externalMessages.add((
+              appState.playerSlots[websocket],
+              if message.data.len <= MaxReplyBytes: message.data else: "",
+              getMonoTime()))
   of ErrorEvent, CloseEvent:
     {.gcsafe.}:
       withLock appState.lock:
@@ -322,7 +336,13 @@ proc declarePlayerFailure(slot: int, message: string) =
   except CatchableError as error:
     echo "minigrid: failed to declare player failure: ", error.msg
 
-proc parseRegistration*(text: string): tuple[ok: bool, isLlm: bool,
+proc parsePlayerJson(text: string): JsonNode =
+  try:
+    parseJson(text)
+  except CatchableError:
+    nil
+
+proc parseRegistration*(text: string): tuple[ok: bool, isLlm, isExternal: bool,
                                              prompt, label, scripted: string] =
   ## The seat's registration blob:
   ##   {"policy":"<label>","prompt":"<PLAYER_PROMPT>","scripted":"scout"|null}
@@ -330,23 +350,22 @@ proc parseRegistration*(text: string): tuple[ok: bool, isLlm: bool,
   ## the replay chat stream.
   if text.len == 0 or text.strip().len == 0 or text.strip()[0] != '{':
     return
-  var node: JsonNode
-  try:
-    node = parseJson(text)
-  except CatchableError:
-    return
-  if node.kind != JObject:
+  let node = parsePlayerJson(text)
+  if node.isNil or node.kind != JObject:
     return
   if not (node.hasKey("policy") or node.hasKey("prompt") or
-          node.hasKey("scripted")):
+          node.hasKey("scripted") or node.hasKey("mode")):
     return
-  result.ok = true
   result.label = node{"policy"}.getStr().truncateRunes(MaxPolicyLabelRunes)
   result.prompt = node{"prompt"}.getStr().truncateRunes(MaxPromptRunes)
   let scripted = node{"scripted"}
   if not scripted.isNil and scripted.kind == JString:
     result.scripted = scripted.getStr()
+  result.isExternal = node{"mode"}.getStr() == "external"
+  if result.isExternal and (result.prompt.len > 0 or result.scripted.len > 0):
+    return
   result.isLlm = result.prompt.strip().len > 0 and result.scripted.len == 0
+  result.ok = true
 
 proc broadcastPacket(packet: seq[uint8], websocket: WebSocket) =
   ## Fire-and-forget: a slow viewer can never stall the episode.
@@ -459,9 +478,14 @@ proc runServerLoop*() =
           continue
         var label = parsed.label
         if label.len == 0:
-          label = if parsed.isLlm: "llm" else: parsed.scripted
+          label =
+            if parsed.isExternal: "external"
+            elif parsed.isLlm: "llm"
+            else: parsed.scripted
         if slot < engine.seats.len:
           engine.seats[slot].isLlm = parsed.isLlm
+          engine.seats[slot].isExternal = parsed.isExternal
+          appState.externalSlots[slot] = parsed.isExternal
           engine.seats[slot].prompt = parsed.prompt
           engine.seats[slot].baseline = parseBaseline(parsed.scripted)
           engine.seats[slot].label = label
@@ -470,10 +494,10 @@ proc runServerLoop*() =
           if entry.slot == slot:
             entry.name = (if label.len > 0: label else: entry.name)
             entry.policy = label
-            entry.kind = (if parsed.isLlm: "llm" else: "scripted")
+            entry.kind = engine.policyKind(slot)
             entry.registered = true
         if slot < sim.policyKinds.len:
-          sim.policyKinds[slot] = (if parsed.isLlm: "llm" else: "scripted")
+          sim.policyKinds[slot] = engine.policyKind(slot)
         registeredSlots[slot] = true
         ## The JOIN record carries the seat's REAL policy name, which is only
         ## known once it registers — so it is written here, at the same tick
@@ -487,10 +511,11 @@ proc runServerLoop*() =
           except CatchableError:
             discard
         writeChat(registerRecord(slot, seatAlias(slot), label,
-          (if parsed.isLlm: "llm" else: "scripted"),
-          (if parsed.isLlm: "" else: $parseBaseline(parsed.scripted))))
+          engine.policyKind(slot),
+          (if parsed.isExternal or parsed.isLlm: ""
+           else: $parseBaseline(parsed.scripted))))
         echo "minigrid: seat ", slot, " registered as ", label, " (",
-          (if parsed.isLlm: "llm" else: "scripted"), ")"
+          engine.policyKind(slot), ")"
       for websocket in handled:
         appState.chatMessages.del(websocket)
       for websocket in appState.closedSockets:
@@ -585,16 +610,108 @@ proc runServerLoop*() =
         for slot in sim.activeSeats():
           observations.add((slot, sim.observationJson(slot,
             includeNotes = false)))
+        let externalStart = getMonoTime()
+        let externalDeadline = externalStart +
+          initDuration(milliseconds = config.attempt1Ms)
+        var externalDone = newSeq[bool](sim.seatCount())
+        var externalCause = newSeq[FallbackCause](sim.seatCount())
+        var externalPlans = newSeq[directives.Directive](sim.seatCount())
+        withLock appState.lock:
+          appState.externalMessages.setLen(0)
+          for slot in sim.activeSeats():
+            if not engine.seats[slot].isExternal:
+              continue
+            var sent = false
+            for websocket, seat in appState.playerSlots.pairs:
+              if seat == slot:
+                websocket.send($( %*{
+                  "type": "decision",
+                  "rid": turnIndex,
+                  "observation": sim.observationJson(slot, includeNotes = true),
+                  "deadline_ms": config.attempt1Ms
+                }), TextMessage)
+                sent = true
+            if not sent:
+              externalDone[slot] = true
+              externalCause[slot] = fcDisconnected
         let decision = engine.turn(sim, turnIndex, elapsedSeconds())
         for record in decision.records:
           writeChat(record)
-        for seat in decision.decisions:
+        while true:
+          var waiting = false
+          for slot in sim.activeSeats():
+            if engine.seats[slot].isExternal and not externalDone[slot]:
+              waiting = true
+          if not waiting:
+            break
+          var messages: seq[tuple[slot: int, text: string,
+                                  received: MonoTime]]
+          var disconnected: seq[int]
+          withLock appState.lock:
+            messages = appState.externalMessages
+            appState.externalMessages.setLen(0)
+            for websocket in appState.closedSockets:
+              if websocket in appState.playerSlots:
+                disconnected.add(appState.playerSlots[websocket])
+          for message in messages:
+            let slot = message.slot
+            if slot < 0 or slot >= engine.seats.len or
+                not engine.seats[slot].isExternal or externalDone[slot] or
+                message.received > externalDeadline:
+              continue
+            let node = parsePlayerJson(message.text)
+            if not node.isNil and node.kind == JObject:
+              let rid = node{"rid"}
+              if not rid.isNil and rid.kind == JInt and
+                  rid.getInt() != turnIndex:
+                continue
+              if node{"type"}.getStr() == "plan" and
+                  not rid.isNil and rid.kind == JInt and
+                  not node{"plan"}.isNil and node["plan"].kind == JObject:
+                let directive = parseDirective(node["plan"],
+                  sim.config.maxActionsPerTurn)
+                if directive.usableReply():
+                  externalPlans[slot] = directive
+                  externalPlans[slot].source = dsExternal
+                  externalPlans[slot].latencyMs =
+                    (getMonoTime() - externalStart).inMilliseconds.int
+                  externalDone[slot] = true
+                  continue
+            externalDone[slot] = true
+            externalCause[slot] = fcSchemaError
+          for slot in disconnected:
+            if slot >= 0 and slot < engine.seats.len and
+                engine.seats[slot].isExternal and not externalDone[slot]:
+              externalDone[slot] = true
+              externalCause[slot] = fcDisconnected
+          if getMonoTime() >= externalDeadline:
+            break
+          sleep(10)
+        for slot in sim.activeSeats():
+          if not engine.seats[slot].isExternal:
+            continue
+          if not externalDone[slot]:
+            externalCause[slot] = fcTransportTimeout
+          if externalPlans[slot].source != dsExternal:
+            let cause = externalCause[slot]
+            externalPlans[slot] = scoutFallback(sim, slot, cause)
+            writeChat(fallbackRecord(turnIndex, slot, 1, cause,
+              "external player did not return a usable plan"))
+        for slot in sim.activeSeats():
+          var directive: directives.Directive
+          if engine.seats[slot].isExternal:
+            directive = externalPlans[slot]
+          else:
+            for seat in decision.decisions:
+              if seat.slot == slot:
+                directive = seat.directive
+                break
           var view: JsonNode = nil
           for entry in observations:
-            if entry.slot == seat.slot:
+            if entry.slot == slot:
               view = entry.view
               break
-          writeChat(sim.applyDirective(seat.slot, seat.directive, view))
+          writeChat(sim.applyDirective(slot, directive, view))
 
       var events = newJArray()
       var tracker = initBroadcastTracker()
