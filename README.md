@@ -39,9 +39,10 @@ The whole game is the gap between the sentence and the 7 × 7 window: you are
 told what to do and shown almost nothing, and every turn you spend looking is a
 turn you did not spend doing.
 
-*A policy is just a prompt.* Both champions are `PLAYER_PROMPT` strategies; the
-LLM call is made by the **game** server, and the seat container is a thin
-registrar.
+The published prompt champions use `PLAYER_PROMPT` strategies with game-side
+model calls. External policies, including Jev, receive a seat-private
+observation and return a plan over the ordinary player WebSocket. The game
+owns plan validation, simulation, results, and replay.
 
 ## The board
 
@@ -87,8 +88,7 @@ in `scores` is an exact tie in all three components — a genuine draw — so
 
 ## Playing it
 
-The seat sends one registration blob and then only listens; every decision
-happens in the game server.
+The existing prompt player registers its strategy for game-side decisions:
 
 ```bash
 coworld upload-policy coworld-minigrid:latest --name my-minigrid \
@@ -98,6 +98,13 @@ coworld upload-policy coworld-minigrid:latest --name my-minigrid \
 
 `PLAYER_SCRIPTED=scout|bumper` selects a published scripted baseline instead.
 A seat that sets neither plays `scout`.
+
+For a player-side Jev policy, run the same player image with `PLAYER_JEV=1`
+and a player-scoped TypeSafe endpoint and credential. Its plan uses the same
+seat observation and action validator as any external player. Set
+`PLAYER_EXTERNAL=1 PLAYER_EXTERNAL_ACTION=forward` to smoke the protocol
+without a model. See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the request and
+reply frames used by trained policies.
 
 Full rules: [docs/RULES.md](docs/RULES.md).
 The reply format: [docs/ACTIONS.md](docs/ACTIONS.md).

@@ -1,15 +1,18 @@
-## The minigrid player container: a policy is just a prompt.
+## The minigrid player container: scripted, prompt, or external action policy.
 ##
-## This process is DELIBERATELY thin. It connects to its seat, sends ONE
-## Sprite v1 chat message carrying its registration, and then only receives.
-## Every decision happens inside the GAME server, because that is the only
-## container the platform injects the `anthropic_api_key` coworld secret
-## into, and because keeping the control layer server-side is what makes the
-## recorded mask log reproducible with no network in the loop.
+## The scripted and prompt modes use the existing game decision path. External
+## mode exercises the ordinary player observation/plan path with one fixed
+## action, Jev choice, or numeric policy; each uses the same WebSocket messages.
 ##
 ##   PLAYER_PROMPT        a strategy in plain English -> this seat is an LLM seat
 ##   PLAYER_SCRIPTED      scout | bumper             -> this seat is scripted
 ##   PLAYER_POLICY_LABEL  a free label for the replay's `register` record
+##   PLAYER_EXTERNAL      1 to request player-side plans
+##   PLAYER_EXTERNAL_ACTION  a fixed action verb for the protocol fixture
+##   PLAYER_JEV           1 to rank player-visible plans through System One
+##   PLAYER_NUMERIC_URL   HTTP endpoint returning {"choice": int} from numeric
+##                        values and action_mask
+##   PLAYER_NUMERIC_KEY   optional bearer key for that endpoint
 ##
 ## A seat that sets neither is `scout`. To field your own policy, reuse
 ## this image and set PLAYER_PROMPT:
@@ -18,8 +21,10 @@
 ##     --run /bin/minigrid-player --secret-env PLAYER_PROMPT="<your strategy>"
 
 import
-  std/[json, options, os, strutils],
+  std/[json, options, os, strutils, sysrand],
   bitworld/spriteprotocol,
+  minigrid/jev_policy,
+  minigrid/numeric_policy,
   minigrid/sim_types,
   whisky
 
@@ -31,7 +36,8 @@ const
   ReconnectAttempts = 6      ## 6 x 500 ms of re-dialling after a live socket
                              ## dies, before accepting the game is gone.
 
-proc registrationBlob(prompt, scripted, policy: string): string =
+proc registrationBlob(prompt, scripted, policy: string,
+                      external: bool): string =
   ## The one registration message. `scripted` is JSON null when the seat is
   ## an LLM seat, so the server can tell "no baseline named" from "scout
   ## named explicitly".
@@ -43,6 +49,8 @@ proc registrationBlob(prompt, scripted, policy: string): string =
     "prompt": prompt.truncateRunes(MaxPromptRunes),
     "policy": policy.truncateRunes(MaxPolicyLabelRunes)
   }
+  if external:
+    node["mode"] = %"external"
   if scripted.len > 0:
     node["scripted"] = %scripted
   else:
@@ -65,14 +73,32 @@ when isMainModule:
   let
     prompt = getEnv("PLAYER_PROMPT").strip()
     scripted = getEnv("PLAYER_SCRIPTED").strip()
+    jev = getEnv("PLAYER_JEV") == "1"
+    numeric = getEnv("PLAYER_NUMERIC_URL").strip().len > 0
+    external = getEnv("PLAYER_EXTERNAL") == "1" or jev or numeric
+    externalAction = getEnv("PLAYER_EXTERNAL_ACTION", "wait")
     label = block:
       let explicit = getEnv("PLAYER_POLICY_LABEL").strip()
       if explicit.len > 0: explicit
       elif prompt.len > 0: "prompt"
       elif scripted.len > 0: scripted
+      elif jev: "jev"
+      elif numeric: "numeric"
+      elif external: "external-action"
       else: "scout"
+  if external and (prompt.len > 0 or scripted.len > 0):
+    quit("PLAYER_EXTERNAL cannot be combined with prompt or scripted", 1)
+  if jev and numeric:
+    quit("PLAYER_JEV cannot be combined with PLAYER_NUMERIC_URL", 1)
+  let numericSession = block:
+    var id = ""
+    if numeric:
+      for value in urandom(16):
+        id.add(toHex(int(value), 2))
+    id
   echo "minigrid player: kind=",
-    (if prompt.len > 0: "llm" else: "scripted"),
+    (if jev: "jev" elif numeric: "numeric" elif external: "external"
+     elif prompt.len > 0: "llm" else: "scripted"),
     " baseline=", (if scripted.len > 0: scripted else: "scout"),
     " label=", label
 
@@ -117,7 +143,7 @@ when isMainModule:
   while true:
     var sessionFrames = 0
     try:
-      socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
+      socket.send(registrationBlob(prompt, scripted, label, external), BinaryMessage)
       var resends = 0
       while true:
         let received = socket.receiveMessage()
@@ -127,7 +153,22 @@ when isMainModule:
         if resends < RegistrationResends and
             sessionFrames mod ResendEveryFrames == 1:
           inc resends
-          socket.send(registrationBlob(prompt, scripted, label), BinaryMessage)
+          socket.send(registrationBlob(prompt, scripted, label, external), BinaryMessage)
+        if external and received.get().kind == TextMessage:
+          let request = parseJson(received.get().data)
+          if request{"type"}.getStr() == "decision":
+            doAssert request["observation"]["lane"].kind == JInt
+            doAssert request["observation"]["known"].kind == JArray
+            let plan =
+              if jev: choosePlan(request["observation"],
+                request["deadline_ms"].getInt())
+              elif numeric: chooseNumericPlan(request, numericSession)
+              else: %*{"actions": [{"do": externalAction}]}
+            socket.send($( %*{
+              "type": "plan",
+              "rid": request["rid"],
+              "plan": plan
+            }), TextMessage)
         socket.send(readyBlob(), BinaryMessage)
     except CatchableError as error:
       echo "minigrid player: socket closed (", error.msg, ")"

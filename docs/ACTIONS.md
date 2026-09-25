@@ -15,7 +15,7 @@ JSON object is a parse failure; a reply with a valid `say` and no `actions` is
 
 | Field | Type | Cap / domain |
 |---|---|---|
-| `actions` | array | **≤ 24 entries**. Entries past the cap are dropped and counted in `actionsDropped`. Absent or empty = twenty-four `wait` ticks, and the reply is still usable |
+| `actions` | array | **≤ 24 entries**. Entries past the cap are dropped and counted in `actionsDropped`. An empty array spends the turn waiting when `say` is present; a reply with neither a usable action nor `say` takes the scout fallback |
 | `actions[].do` | string | **≤ 8 runes**; `left` \| `right` \| `forward` \| `pickup` \| `drop` \| `toggle` \| `wait` \| `goto` \| `face`, lower-cased before matching |
 | `actions[].x`, `.y` | integer | required iff `do == "goto"`; **clamped to 0…12**; a non-integer or absent value **drops the entry** |
 | `actions[].dir` | string | required iff `do == "face"`; **≤ 5 runes**; matched case-insensitively against `N E S W north east south west`; anything else drops the entry |
