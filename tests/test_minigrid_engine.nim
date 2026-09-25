@@ -153,7 +153,17 @@ suite "minigrid engine":
           check plan["verbs"][0].getStr() == "forward"
           inc plans
       check plans > 0
-      check readFile(log).splitLines().filterIt(it.len > 0).len == plans
+      var sessions: seq[string]
+      var decisions: seq[int]
+      for line in readFile(log).splitLines():
+        if line.len > 0:
+          let call = parseJson(line)
+          sessions.add(call["session"].getStr())
+          decisions.add(call["decision_id"].getInt())
+      check sessions.len == plans
+      check sessions.allIt(it == sessions[0])
+      for index in 1 ..< decisions.len:
+        check decisions[index] > decisions[index - 1]
     finally:
       stub.terminate()
       discard stub.waitForExit()

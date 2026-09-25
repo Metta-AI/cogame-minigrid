@@ -21,7 +21,7 @@
 ##     --run /bin/minigrid-player --secret-env PLAYER_PROMPT="<your strategy>"
 
 import
-  std/[json, options, os, strutils],
+  std/[json, options, os, strutils, sysrand],
   bitworld/spriteprotocol,
   minigrid/jev_policy,
   minigrid/numeric_policy,
@@ -90,6 +90,12 @@ when isMainModule:
     quit("PLAYER_EXTERNAL cannot be combined with prompt or scripted", 1)
   if jev and numeric:
     quit("PLAYER_JEV cannot be combined with PLAYER_NUMERIC_URL", 1)
+  let numericSession = block:
+    var id = ""
+    if numeric:
+      for value in urandom(16):
+        id.add(toHex(int(value), 2))
+    id
   echo "minigrid player: kind=",
     (if jev: "jev" elif numeric: "numeric" elif external: "external"
      elif prompt.len > 0: "llm" else: "scripted"),
@@ -156,7 +162,7 @@ when isMainModule:
             let plan =
               if jev: choosePlan(request["observation"],
                 request["deadline_ms"].getInt())
-              elif numeric: chooseNumericPlan(request)
+              elif numeric: chooseNumericPlan(request, numericSession)
               else: %*{"actions": [{"do": externalAction}]}
             socket.send($( %*{
               "type": "plan",

@@ -53,14 +53,27 @@ every possible 24-action sequence. Existing 182-choice pilot checkpoints need
 retraining against this 180-choice catalog.
 
 To serve a numeric policy, run an HTTP inference service that accepts
-`{"values": [1295 numbers], "action_mask": [180 booleans]}` and returns
-`{"choice": integer}`. Set `PLAYER_NUMERIC_URL` in the player container; use
-`PLAYER_NUMERIC_KEY` if the service needs a bearer token. The player encodes
+`{"session": "episode token", "seat": integer, "decision_id": integer,
+"values": [1295 numbers], "action_mask": [180 booleans]}` and returns
+`{"choice": integer}`. The player generates a new session token per episode;
+the service uses it to isolate and reset recurrent state and can return the
+cached choice for a repeated decision ID. Set `PLAYER_NUMERIC_URL` in the player
+container. Set `PLAYER_NUMERIC_KEY` if the service needs a bearer token. The
+player encodes
 each seat-private observation, checks the returned choice against the same
 mask used in training, and sends its decoded plan through the normal `/player`
 socket. The game owns parsing, legality, results, and replay. The local
 `tests/numeric_stub.py` fixture returns `forward`; it verifies the serving
 protocol, not a trained checkpoint or gameplay strength.
+
+Metta's `metta-choice-serve /path/to/frozen-bundle --port 18888` implements
+this request for a single player episode. Point `PLAYER_NUMERIC_URL` at
+`http://127.0.0.1:18888/choice` when the service runs beside the player.
+Start a fresh service process for each episode. A locally initialized
+1,295-feature, 180-choice frozen bundle completed a four-seat native game
+through this path with 30 accepted external plans and no fallback. Its weights
+were not trained, so this proves checkpoint loading and protocol compatibility,
+not training quality.
 
 ```bash
 nim c -d:release --path:src --out:/tmp/minigrid-numeric-bridge \

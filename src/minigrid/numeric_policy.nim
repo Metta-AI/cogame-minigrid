@@ -4,7 +4,7 @@ import std/[json, os]
 import curly
 import numeric_bridge
 
-proc chooseNumericPlan*(request: JsonNode): JsonNode =
+proc chooseNumericPlan*(request: JsonNode, session: string): JsonNode =
   let
     view = request["observation"]
     variant = request["variant"].getStr()
@@ -20,7 +20,13 @@ proc chooseNumericPlan*(request: JsonNode): JsonNode =
   let key = getEnv("PLAYER_NUMERIC_KEY")
   if key.len > 0:
     headers["authorization"] = "Bearer " & key
-  let body = %*{"values": values(view, variant), "action_mask": mask}
+  let body = %*{
+    "session": session,
+    "seat": view["lane"],
+    "decision_id": request["rid"],
+    "values": values(view, variant),
+    "action_mask": mask
+  }
   let response = newCurly().post(endpoint, headers, $body,
     max(1, request["deadline_ms"].getInt() div 1000))
   if response.code < 200 or response.code >= 300:
