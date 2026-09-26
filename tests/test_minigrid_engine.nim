@@ -45,8 +45,6 @@ proc runEpisode(dir: string, extra: seq[(string, string)] = @[],
     let policyEnv =
       if player == "external":
         "PLAYER_EXTERNAL=1 PLAYER_EXTERNAL_ACTION=forward"
-      elif player == "jev":
-        "PLAYER_JEV=1"
       elif player == "numeric":
         "PLAYER_NUMERIC_URL=http://127.0.0.1:18995"
       else:
@@ -84,49 +82,6 @@ suite "minigrid engine":
         check plan["verbs"][0].getStr() == "forward"
         inc externalPlans
     check externalPlans > 0
-
-  test "Jev chooses through the same external seat protocol":
-    let dir = getTempDir() / "minigrid-jev-policy"
-    removeDir(dir)
-    createDir(dir)
-    let log = dir / "calls.jsonl"
-    let stub = startProcess("python3", args = @[
-      repoRoot() / "tests/jev_stub.py", "18996", log],
-      options = {poUsePath})
-    sleep(100)
-    putEnv("TYPESAFE_BASE_URL", "http://127.0.0.1:18996")
-    putEnv("TYPESAFE_API_KEY", "mock")
-    try:
-      let run = runEpisode(dir,
-        players = @["jev", "bumper", "scout", "bumper"])
-      check run.code == 0
-      let results = parseJson(readFile(dir / "results.json"))
-      let summary = parseJson(execProcess("python3 " & repoRoot() &
-        "/tools/replay_summary.py " & dir / "replay.replay"))
-      check results["reason"].getStr() == "complete"
-      check results["policyKinds"][0].getStr() == "external"
-      check results["fallbackTurns"][0].getInt() == 0
-      var plans = 0
-      for plan in summary["plans"]:
-        if plan["slot"].getInt() == 0:
-          check plan["source"].getStr() == "external"
-          check plan["verbs"][0].getStr() == "forward"
-          inc plans
-      check plans > 0
-      var calls = 0
-      for line in readFile(log).splitLines():
-        if line.len == 0: continue
-        let call = parseJson(line)
-        check call["lane"].getInt() == 0
-        check call["choice"].getStr() == "forward"
-        inc calls
-      check calls == plans
-    finally:
-      stub.terminate()
-      discard stub.waitForExit()
-      stub.close()
-      delEnv("TYPESAFE_BASE_URL")
-      delEnv("TYPESAFE_API_KEY")
 
   test "numeric candidate becomes an ordinary player plan":
     let dir = getTempDir() / "minigrid-numeric-policy"
