@@ -40,7 +40,7 @@ told what to do and shown almost nothing, and every turn you spend looking is a
 turn you did not spend doing.
 
 The published prompt champions use `PLAYER_PROMPT` strategies with game-side
-model calls. External policies, including Jev, receive a seat-private
+model calls. External policies receive a seat-private
 observation and return a plan over the ordinary player WebSocket. The game
 owns plan validation, simulation, results, and replay.
 
@@ -99,10 +99,7 @@ coworld upload-policy coworld-minigrid:latest --name my-minigrid \
 `PLAYER_SCRIPTED=scout|bumper` selects a published scripted baseline instead.
 A seat that sets neither plays `scout`.
 
-For a player-side Jev policy, run the same player image with `PLAYER_JEV=1`
-and a player-scoped TypeSafe endpoint and credential. Its plan uses the same
-seat observation and action validator as any external player. Set
-`PLAYER_EXTERNAL=1 PLAYER_EXTERNAL_ACTION=forward` to smoke the protocol
+Set `PLAYER_EXTERNAL=1 PLAYER_EXTERNAL_ACTION=forward` to smoke the protocol
 without a model. See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the request and
 reply frames used by trained policies.
 

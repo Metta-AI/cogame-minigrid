@@ -73,12 +73,8 @@ Late replies and replies for another `rid` cannot control a later turn. The
 normal certification roster continues to use the shipped scripted players.
 
 The bundled player can exercise this protocol with `PLAYER_EXTERNAL=1` and
-`PLAYER_EXTERNAL_ACTION=forward`. Set `PLAYER_JEV=1` instead to have Jev rank
-the player-visible plan candidates in the player process. It accepts the
-TypeSafe API, capture endpoint, or seat-scoped sidecar environment used by
-other Jev players. No model request or credential is handled by the game for
-this external mode. A trained policy can send the same `plan` frame from its
-own player image. The bundled numeric player adapter accepts
+`PLAYER_EXTERNAL_ACTION=forward`. A trained policy can send the same `plan`
+frame from its own player image. The bundled numeric player adapter accepts
 `PLAYER_NUMERIC_URL`, sends the 1,295-feature observation and 180-choice mask
 to that inference service, and maps its legal choice back to this same plan
 frame. See [TRAINING.md](TRAINING.md).
