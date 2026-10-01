@@ -304,7 +304,7 @@ proc turn*(engine: var DecisionEngine, sim: var SimServer, turnIndex,
           "the JSON object described above, starting with '{', with an " &
           "\"actions\" array.")
       let request = engine.client.requestFor(
-        SystemPrompt, userMessage(engine.seats[slot].prompt, user))
+        SystemPrompt, userMessage(engine.seats[slot].prompt, user), slot)
       batch.post(request.url, request.headers, request.body, $slot)
       engine.noteRequest()
     engine.lastBatchSize = max(engine.lastBatchSize, open.len)

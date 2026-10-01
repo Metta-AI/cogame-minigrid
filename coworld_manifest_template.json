@@ -22,9 +22,7 @@
         "/bin/minigrid"
       ],
       "source_url": "https://github.com/Metta-AI/cogame-minigrid",
-      "env": {
-        "ANTHROPIC_API_KEY_URI": "secret://coworld/minigrid/anthropic_api_key"
-      }
+      "env": {}
     },
     "protocols": {
       "player": {

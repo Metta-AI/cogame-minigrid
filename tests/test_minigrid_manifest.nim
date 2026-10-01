@@ -119,11 +119,9 @@ suite "minigrid manifest":
     check not m.hasKey("replay_viewer")
     check m["game"]["runnable"]["type"].getStr() == "game"
     check m["game"]["runnable"]["run"][0].getStr() == "/bin/minigrid"
-    ## game.name equals the slug AND the secret URI's namespace (the
-    ## commons-family 2026-08-24 scar).
     check m["game"]["name"].getStr() == "minigrid"
-    check m["game"]["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr() ==
-      "secret://coworld/minigrid/anthropic_api_key"
+    doAssert m{"game"}{"runnable"}{"env"}{"ANTHROPIC_API_KEY_URI"}.isNil,
+      "hosted LLM uses the platform sidecar without provider secrets"
     check not m.hasKey("version")
     check not m["game"].hasKey("display_name")
     check m["game"].hasKey("owner")
