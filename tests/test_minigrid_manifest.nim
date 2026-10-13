@@ -122,8 +122,7 @@ suite "minigrid manifest":
     ## game.name equals the slug AND the secret URI's namespace (the
     ## commons-family 2026-08-24 scar).
     check m["game"]["name"].getStr() == "minigrid"
-    check m["game"]["runnable"]["env"]["ANTHROPIC_API_KEY_URI"].getStr() ==
-      "secret://coworld/minigrid/anthropic_api_key"
+    check m["game"]["runnable"]["env"].len == 0
     check not m.hasKey("version")
     check not m["game"].hasKey("display_name")
     check m["game"].hasKey("owner")
@@ -210,4 +209,4 @@ suite "minigrid manifest":
     check "  minigrid:" in compose
     check "image: coworld-minigrid:latest" in compose
     check "platform: linux/amd64" in compose
-    check "network: host" in compose
+    check "network: host" notin compose
